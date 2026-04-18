@@ -1,0 +1,40 @@
+<svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="ic">
+      <rect x="0" y="0" width="400" height="400" rx="4"/>
+    </clipPath>
+  </defs>
+
+  <rect x="0" y="0" width="400" height="400" rx="4" fill="#1A6EE8"/>
+  <path d="M0 230 Q160 110 400 220 L400 400 L0 400 Z" fill="#2E82F0" clip-path="url(#ic)"/>
+  <path d="M230 0 Q380 10 400 130 L400 0 Z" fill="#5BA8F5" opacity="0.5" clip-path="url(#ic)"/>
+
+  <!-- TL -->
+  <rect x="22" y="18" width="58" height="17" rx="3" fill="white"/>
+  <rect x="22" y="18" width="17" height="58" rx="3" fill="white"/>
+  <!-- TR -->
+  <rect x="320" y="18" width="58" height="17" rx="3" fill="white"/>
+  <rect x="361" y="18" width="17" height="58" rx="3" fill="white"/>
+  <!-- BL -->
+  <rect x="22" y="365" width="58" height="17" rx="3" fill="white"/>
+  <rect x="22" y="324" width="17" height="58" rx="3" fill="white"/>
+  <!-- BR -->
+  <rect x="320" y="365" width="58" height="17" rx="3" fill="white"/>
+  <rect x="361" y="324" width="17" height="58" rx="3" fill="white"/>
+
+  <!-- Camera circle -->
+  <circle cx="200" cy="200" r="72" fill="none" stroke="white" stroke-width="14"/>
+  <circle cx="200" cy="200" r="50" fill="none" stroke="white" stroke-width="6" opacity="0.5"/>
+  <circle cx="200" cy="200" r="30" fill="white" opacity="0.9"/>
+  <circle cx="186" cy="188" r="9" fill="white" opacity="0.5"/>
+
+  <!-- Pixel grid -->
+  <rect x="304" y="281" width="20" height="20" rx="3" fill="white"/>
+  <rect x="330" y="281" width="20" height="20" rx="3" fill="white"/>
+  <rect x="278" y="307" width="20" height="20" rx="3" fill="white"/>
+  <rect x="304" y="307" width="20" height="20" rx="3" fill="white"/>
+  <rect x="330" y="307" width="20" height="20" rx="3" fill="white"/>
+  <rect x="278" y="333" width="20" height="20" rx="3" fill="white"/>
+  <rect x="304" y="333" width="20" height="20" rx="3" fill="white"/>
+  <rect x="330" y="333" width="20" height="20" rx="3" fill="white"/>
+</svg>

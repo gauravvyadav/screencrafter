@@ -1,0 +1,270 @@
+export default defineBackground(() => {
+  // Handle extension install
+  browser.runtime.onInstalled.addListener((details) => {
+    if (details.reason === 'install') {
+      browser.tabs.create({ url: 'https://screencrafter.gauravlabs.com/install' });
+    }
+  });
+
+  // Handle extension uninstall
+  browser.runtime.setUninstallURL('https://screencrafter.gauravlabs.com/uninstall');
+
+  function sanitizeUrl(url: string | undefined): string {
+    try {
+      const parsed = new URL(url || '');
+      return parsed.origin;
+    } catch {
+      return '';
+    }
+  }
+
+  browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const isFromExtension = !sender.tab && sender.id === browser.runtime.id;
+    const isFromTab = sender.tab?.id;
+    if (!isFromExtension && !isFromTab) return;
+    if (message.type === 'CAPTURE_VISIBLE') {
+      handleCaptureVisible();
+      return true;
+    }
+
+    if (message.type === 'CAPTURE_FULL_PAGE') {
+      handleFullPageCaptureScroll();
+      return true;
+    }
+
+    if (message.type === 'CAPTURE_AREA') {
+      handleAreaCapture();
+      return true;
+    }
+    
+    if (message.type === 'OPEN_DASHBOARD') {
+       browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
+       return true;
+    }
+  });
+
+  // Save capture to both lastCapture and captureHistory
+  async function saveCapture(capture: any) {
+    const { captureHistory = [] } = await browser.storage.local.get('captureHistory') as any;
+    // Avoid duplicates by id
+    const exists = captureHistory.some((c: any) => c.id === capture.id);
+    const updatedHistory = exists
+      ? captureHistory
+      : [capture, ...captureHistory].slice(0, 50);
+    await browser.storage.local.set({
+      lastCapture: capture,
+      captureHistory: updatedHistory,
+    });
+  }
+
+  async function handleCaptureVisible() {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    const dataUrl = await browser.tabs.captureVisibleTab();
+    const capture = {
+      id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      image: dataUrl,
+      url: sanitizeUrl(tab.url),
+      title: tab.title || '',
+      timestamp: Date.now(),
+    };
+    await saveCapture(capture);
+    browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
+  }
+
+  // --- SCROLL-BASED FULL PAGE CAPTURE ---
+  async function handleFullPageCaptureScroll() {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+
+    try {
+      const storage: any = await browser.storage.local.get('maxCaptureHeight');
+      const MAX_HEIGHT = Number(storage.maxCaptureHeight || 15000);
+
+      // 1. Prepare page (scroll bottom/top) and get dims
+      const dims = await browser.tabs.sendMessage(tab.id, { type: 'PREPARE_FULL_PAGE' });
+      if (!dims) return;
+
+      const viewport = await browser.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' });
+      
+      const fullWidth = dims.width;
+      const fullHeight = dims.height;
+      const viewHeight = viewport.height;
+      const dpr = dims.dpr;
+      
+      const fragments: { dataUrl: string, x: number, y: number }[] = [];
+      let hasHiddenElements = false;
+
+      // 2. Capture in chunks by scrolling
+      for (let y = 0; y < Math.min(fullHeight, MAX_HEIGHT); y += viewHeight) {
+        if (y > 0 && !hasHiddenElements) {
+            await browser.tabs.sendMessage(tab.id, { type: 'HIDE_FIXED_ELEMENTS' }).catch(() => {});
+            hasHiddenElements = true;
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        await browser.tabs.sendMessage(tab.id, { type: 'SCROLL_TO', data: { x: 0, y: y } });
+        
+        // Wait for scroll to settle and respect MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND (max 2/sec)
+        await new Promise(r => setTimeout(r, 600));
+
+        const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
+        
+        const scrollPos = await browser.tabs.sendMessage(tab.id, { type: 'GET_SCROLL_POS' });
+
+        fragments.push({
+          dataUrl,
+          x: scrollPos.x * dpr,
+          y: scrollPos.y * dpr,
+        });
+
+        // If we hit the absolute bottom, break to avoid duplicate captures if y was overshot
+        if (scrollPos.y + viewHeight >= fullHeight || y >= fullHeight) {
+            break;
+        }
+      }
+
+      if (hasHiddenElements) {
+          await browser.tabs.sendMessage(tab.id, { type: 'RESTORE_FIXED_ELEMENTS' }).catch(() => {});
+      }
+
+      if (fragments.length > 0) {
+        const capture = {
+          id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          fragments,
+          fullWidth: fullWidth * dpr,
+          fullHeight: fullHeight * dpr,
+          url: sanitizeUrl(tab.url),
+          title: tab.title || '',
+          timestamp: Date.now(),
+          type: 'full-page-scroll',
+        };
+        await saveCapture(capture);
+        browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
+      }
+    } catch (err: any) {
+      console.error('Scroll capture failed', err);
+      browser.tabs.sendMessage(tab.id, {
+        type: 'SHOW_ALERT',
+        data: { message: 'Screencrafter Error: ' + (err.message || String(err)) }
+      }).catch(() => {});
+    }
+  }
+
+  async function handleAreaCapture() {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    try {
+      // Capture the screen IMMEDIATELY while it's clean (no overlay, no popup)
+      const dataUrl = await browser.tabs.captureVisibleTab(undefined as any, { format: 'png' });
+      
+      const result = await browser.tabs.sendMessage(tab.id, { type: 'START_AREA_SELECTION' });
+      if (!result || !result.area) return;
+      
+      const { area, dpr } = result;
+      
+      const croppedDataUrl = await cropImage(dataUrl, area, dpr);
+      if (croppedDataUrl) {
+        let downloadUrl = croppedDataUrl;
+        
+        // Firefox and some Chrome versions prefer Blob URLs for large downloads
+        if (croppedDataUrl.startsWith('data:')) {
+          try {
+            const [header, base64] = croppedDataUrl.split(',');
+            const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+            const binary = atob(base64);
+            const array = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+            const blob = new Blob([array], { type: mime });
+            downloadUrl = URL.createObjectURL(blob);
+          } catch (e) {
+            console.error('Blob URL conversion failed', e);
+          }
+        }
+
+        browser.downloads.download({ 
+          url: downloadUrl, 
+          filename: `screencrafter-crop-${Date.now()}.png` 
+        });
+      }
+    } catch (err) {
+      console.error('Area capture failed', err);
+    }
+  }
+
+  async function cropImage(dataUrl: string, area: any, dpr: number): Promise<string> {
+    try {
+      let img: HTMLImageElement | ImageBitmap;
+      
+      // MV2 (Firefox) / Background Page support
+      if (typeof Image !== 'undefined') {
+        img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve, reject) => {
+          (img as HTMLImageElement).onload = resolve;
+          (img as HTMLImageElement).onerror = reject;
+        });
+      } else {
+      // MV3 (Chrome) / Service Worker support
+      const [header, base64] = dataUrl.split(',');
+      const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+      const binary = atob(base64);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+      const blob = new Blob([array], { type: mime });
+      img = await createImageBitmap(blob);
+      }
+
+      const sw = Math.round(area.width * dpr);
+      const sh = Math.round(area.height * dpr);
+      const sx = Math.round(area.x * dpr);
+      const sy = Math.round(area.y * dpr);
+
+      // Create canvas (use document.createElement if in a background page for max compatibility)
+      let canvas: any;
+      if (typeof document !== 'undefined') {
+        canvas = document.createElement('canvas');
+        canvas.width = sw;
+        canvas.height = sh;
+      } else {
+        canvas = new OffscreenCanvas(sw, sh);
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+
+      const radius = 8 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(radius, 0); ctx.lineTo(sw - radius, 0);
+      ctx.quadraticCurveTo(sw, 0, sw, radius);
+      ctx.lineTo(sw, sh - radius);
+      ctx.quadraticCurveTo(sw, sh, sw - radius, sh);
+      ctx.lineTo(radius, sh);
+      ctx.quadraticCurveTo(0, sh, 0, sh - radius);
+      ctx.lineTo(0, radius); ctx.quadraticCurveTo(0, 0, radius, 0);
+      ctx.closePath();
+      ctx.clip();
+
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      // Handle blob conversion
+      let croppedBlob: Blob;
+      if (canvas.convertToBlob) {
+        croppedBlob = await canvas.convertToBlob({ type: 'image/png' });
+      } else {
+        // Fallback for regular canvas
+        const data = canvas.toDataURL('image/png');
+        return data;
+      }
+
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(croppedBlob);
+      });
+    } catch (e) {
+      console.error('Background crop failed', e);
+      return '';
+    }
+  }
+});
