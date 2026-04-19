@@ -6,8 +6,8 @@ export default defineConfig({
   manifest: {
     version: '0.1.0',
     permissions: ['activeTab', 'tabs', 'storage', 'unlimitedStorage', 'downloads', 'scripting'],
-    name: 'Full Page Screenshot Tool – Fast & Clean | Screencrafter',
-    description: 'Full Page Screenshot Tool – Fast & Clean | Screencrafter. Capture, annotate, and save full page screenshots with ease.',
+    name: 'Screencrafter - Full Page Screenshot Tool',
+    description: 'Capture, annotate, and save full page screenshots with ease.',
     action: {
       default_icon: {
         16: '/icon/16.png',
@@ -22,7 +22,7 @@ export default defineConfig({
     browser_specific_settings: {
       gecko: {
         id: 'screencrafter@gauravvyadav',
-        strict_min_version: '109.0',
+        strict_min_version: '142.0',
         data_collection_permissions: {
           required: ['none'],
         },
