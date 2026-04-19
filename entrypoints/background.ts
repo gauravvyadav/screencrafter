@@ -18,6 +18,36 @@ export default defineBackground(() => {
     }
   }
 
+  /**
+   * Ensures the content script is running in the given tab.
+   * Pings the content script first; if it doesn't respond, re-injects it.
+   * Returns true if the content script is ready, false if injection failed
+   * (e.g. restricted pages like chrome://, edge://, about:, etc.).
+   */
+  async function ensureContentScript(tabId: number): Promise<boolean> {
+    try {
+      // Try pinging the content script
+      const response = await browser.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
+      if (response === 'PONG') return true;
+    } catch {
+      // Content script not reachable
+    }
+
+    // Content script not loaded — try to inject it
+    try {
+      await browser.scripting.executeScript({
+        target: { tabId },
+        files: ['/content-scripts/content.js'],
+      });
+      // Wait a moment for the script to initialize
+      await new Promise(r => setTimeout(r, 200));
+      return true;
+    } catch (err) {
+      console.warn('Cannot inject content script into tab', tabId, err);
+      return false;
+    }
+  }
+
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const isFromExtension = !sender.tab && sender.id === browser.runtime.id;
     const isFromTab = sender.tab?.id;
@@ -72,10 +102,55 @@ export default defineBackground(() => {
     browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
   }
 
+  /** Checks if a tab URL is capturable (not a restricted browser page). */
+  function isCapturableTab(url: string | undefined): boolean {
+    if (!url) return false;
+    const restrictedPrefixes = [
+      'chrome://', 'chrome-extension://', 'edge://', 'about:',
+      'moz-extension://', 'devtools://', 'view-source:',
+    ];
+    const restrictedDomains = [
+      'chromewebstore.google.com',
+      'chrome.google.com/webstore',
+      'microsoftedge.microsoft.com/addons',
+      'addons.mozilla.org',
+    ];
+    if (restrictedPrefixes.some(prefix => url.startsWith(prefix))) return false;
+    try {
+      const host = new URL(url).hostname + new URL(url).pathname;
+      if (restrictedDomains.some(d => host.startsWith(d))) return false;
+    } catch { /* invalid URL */ }
+    return true;
+  }
+
+  /** Shows a temporary badge on the extension icon when capture is blocked. */
+  function notifyRestricted() {
+    browser.action.setBadgeText({ text: '!' });
+    browser.action.setBadgeBackgroundColor({ color: '#EF4444' });
+    browser.action.setTitle({ title: 'Screencrafter: Cannot capture this page (restricted by browser)' });
+    setTimeout(() => {
+      browser.action.setBadgeText({ text: '' });
+      browser.action.setTitle({ title: '' });
+    }, 4000);
+  }
+
   // --- SCROLL-BASED FULL PAGE CAPTURE ---
   async function handleFullPageCaptureScroll() {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
+
+    if (!isCapturableTab(tab.url)) {
+      console.warn('Cannot capture this page:', tab.url);
+      notifyRestricted();
+      return;
+    }
+
+    // Ensure content script is loaded before messaging
+    const scriptReady = await ensureContentScript(tab.id);
+    if (!scriptReady) {
+      console.warn('Content script could not be injected into tab', tab.id);
+      return;
+    }
 
     try {
       const storage: any = await browser.storage.local.get('maxCaptureHeight');
@@ -154,6 +229,20 @@ export default defineBackground(() => {
   async function handleAreaCapture() {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
+
+    if (!isCapturableTab(tab.url)) {
+      console.warn('Cannot capture this page:', tab.url);
+      notifyRestricted();
+      return;
+    }
+
+    // Ensure content script is loaded before messaging
+    const scriptReady = await ensureContentScript(tab.id);
+    if (!scriptReady) {
+      console.warn('Content script could not be injected into tab', tab.id);
+      return;
+    }
+
     try {
       // Capture the screen IMMEDIATELY while it's clean (no overlay, no popup)
       const dataUrl = await browser.tabs.captureVisibleTab(undefined as any, { format: 'png' });

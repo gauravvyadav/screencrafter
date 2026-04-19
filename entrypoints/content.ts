@@ -5,6 +5,10 @@ export default defineContentScript({
       const isFromExtension = sender.id === browser.runtime.id;
       const isFromTab = sender.tab?.id;
       if (!isFromExtension && !isFromTab) return;
+      if (message.type === 'PING') {
+        sendResponse('PONG');
+        return;
+      }
       if (message.type === 'PREPARE_FULL_PAGE') {
         preparePage().then(sendResponse);
         return true;

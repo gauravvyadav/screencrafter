@@ -5,7 +5,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     version: '0.1.0',
-    permissions: ['activeTab', 'tabs', 'storage', 'unlimitedStorage', 'downloads'],
+    permissions: ['activeTab', 'tabs', 'storage', 'unlimitedStorage', 'downloads', 'scripting'],
     name: 'Full Page Screenshot Tool – Fast & Clean | Screencrafter',
     description: 'Full Page Screenshot Tool – Fast & Clean | Screencrafter. Capture, annotate, and save full page screenshots with ease.',
     action: {

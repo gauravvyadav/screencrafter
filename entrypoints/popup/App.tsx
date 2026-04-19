@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, FileText, Crop, Images, ArrowUpRight } from 'lucide-react';
+import { Monitor, FileText, Crop, Images, ArrowUpRight, ShieldAlert, ExternalLink } from 'lucide-react';
 import { sendMessage } from '@/utils/messaging';
 import { useTheme } from '@/hooks/useTheme';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -7,13 +7,41 @@ import { Logo } from '@/components/Logo';
 
 const VERSION = '0.1.0';
 
+const RESTRICTED_PREFIXES = [
+  'chrome://', 'chrome-extension://', 'edge://', 'about:',
+  'moz-extension://', 'devtools://', 'view-source:',
+];
+const RESTRICTED_DOMAINS = [
+  'chromewebstore.google.com',
+  'chrome.google.com/webstore',
+  'microsoftedge.microsoft.com/addons',
+  'addons.mozilla.org',
+];
+
+function isRestrictedUrl(url: string | undefined): boolean {
+  if (!url) return true;
+  if (RESTRICTED_PREFIXES.some(p => url.startsWith(p))) return true;
+  try {
+    const { hostname, pathname } = new URL(url);
+    const full = hostname + pathname;
+    if (RESTRICTED_DOMAINS.some(d => full.startsWith(d))) return true;
+  } catch { /* invalid URL */ }
+  return false;
+}
+
 function App() {
   const { theme, toggleTheme, isDark } = useTheme();
   const [maxHeight, setMaxHeight] = useState(15000);
+  const [restricted, setRestricted] = useState(false);
 
   useEffect(() => {
     browser.storage.local.get('maxCaptureHeight').then((res: any) => {
       if (res.maxCaptureHeight) setMaxHeight(Number(res.maxCaptureHeight));
+    });
+
+    // Check if current tab is restricted
+    browser.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      setRestricted(isRestrictedUrl(tab?.url));
     });
   }, []);
 
@@ -38,6 +66,8 @@ function App() {
         <ThemeToggle theme={theme} toggleTheme={toggleTheme} isDark={isDark} size={16} />
       </div>
 
+      {restricted && <RestrictedBanner isDark={isDark} />}
+
       <div className="p-4 space-y-2">
         <OptionButton 
           onClick={handleCaptureVisible}
@@ -46,37 +76,41 @@ function App() {
           desc="Capture current viewport"
           isDark={isDark}
         />
-        <OptionButton 
-          onClick={handleFullPageCapture}
-          icon={<FileText size={20}/>}
-          title="Full Page"
-          desc="Capture entire scrollable page"
-          isDark={isDark}
-        />
-        <OptionButton 
-          onClick={handleAreaCapture}
-          icon={<Crop size={20}/>}
-          title="Select Area"
-          desc="Quick crop and download"
-          isDark={isDark}
-        />
-        
-        <div className={`mt-4 p-3 border rounded-xl transition-all ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-gray-200'}`}>
-          <div className="flex justify-between items-center mb-2">
-            <span className={`text-[11px] font-bold uppercase tracking-wider ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Max Capture Height</span>
-            <span className="text-[10px] font-mono text-blue-500 font-bold">{maxHeight}px</span>
-          </div>
-          <input 
-            type="range" 
-            min="5000" 
-            max="40000" 
-            step="1000" 
-            value={maxHeight} 
-            onChange={handleMaxHeightChange} 
-            className="w-full accent-blue-600 h-1 bg-blue-600/10 rounded-lg cursor-pointer appearance-none" 
-          />
-          <div className={`text-[9px] mt-2 font-medium ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Prevents infinite scroll runaway</div>
-        </div>
+        {!restricted && (
+          <>
+            <OptionButton 
+              onClick={handleFullPageCapture}
+              icon={<FileText size={20}/>}
+              title="Full Page"
+              desc="Capture entire scrollable page"
+              isDark={isDark}
+            />
+            <OptionButton 
+              onClick={handleAreaCapture}
+              icon={<Crop size={20}/>}
+              title="Select Area"
+              desc="Quick crop and download"
+              isDark={isDark}
+            />
+            
+            <div className={`mt-4 p-3 border rounded-xl transition-all ${isDark ? 'bg-white/5 border-white/5' : 'bg-white border-gray-200'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className={`text-[11px] font-bold uppercase tracking-wider ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Max Capture Height</span>
+                <span className="text-[10px] font-mono text-blue-500 font-bold">{maxHeight}px</span>
+              </div>
+              <input 
+                type="range" 
+                min="5000" 
+                max="40000" 
+                step="1000" 
+                value={maxHeight} 
+                onChange={handleMaxHeightChange} 
+                className="w-full accent-blue-600 h-1 bg-blue-600/10 rounded-lg cursor-pointer appearance-none" 
+              />
+              <div className={`text-[9px] mt-2 font-medium ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Prevents infinite scroll runaway</div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={`px-4 py-3 border-t transition-colors duration-300 ${isDark ? 'bg-[#16161a] border-white/5' : 'bg-gray-50 border-gray-100'}`}>
@@ -90,6 +124,45 @@ function App() {
           </div>
           <ArrowUpRight size={14} className={`transition-all ${isDark ? 'text-gray-600 group-hover:text-blue-400' : 'text-gray-400 group-hover:text-blue-500'} group-hover:translate-x-0.5 group-hover:-translate-y-0.5`} />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function RestrictedBanner({ isDark }: { isDark: boolean }) {
+  return (
+    <div className="p-4">
+      <div className={`rounded-xl border p-4 space-y-3 ${isDark ? 'bg-amber-500/5 border-amber-500/15' : 'bg-amber-50 border-amber-200/60'}`}>
+        <div className="flex items-start gap-3">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isDark ? 'bg-amber-500/10' : 'bg-amber-100'}`}>
+            <ShieldAlert size={18} className={isDark ? 'text-amber-400' : 'text-amber-600'} />
+          </div>
+          <div>
+            <p className={`text-[13px] font-semibold leading-snug ${isDark ? 'text-amber-300' : 'text-amber-800'}`}>
+              Restricted Page
+            </p>
+            <p className={`text-[11px] mt-1 leading-relaxed ${isDark ? 'text-amber-400/70' : 'text-amber-700/80'}`}>
+              <span className="font-semibold">Full Page</span> and <span className="font-semibold">Select Area</span> captures are unavailable on this page. Your browser restricts extensions from running scripts on web store, settings, and other extension pages.
+            </p>
+          </div>
+        </div>
+
+        <div className={`h-px ${isDark ? 'bg-amber-500/10' : 'bg-amber-200/50'}`} />
+
+        <a
+          href="https://gauravlabs.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            browser.tabs.create({ url: 'https://gauravlabs.com' });
+            window.close();
+          }}
+          className={`flex items-center gap-2 text-[11px] font-semibold transition-colors ${isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
+        >
+          <ExternalLink size={12} />
+          Try on another page
+        </a>
       </div>
     </div>
   );
