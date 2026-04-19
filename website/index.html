@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screencrafter — Full Page Screenshot Tool for Browsers</title>
+  <meta name="description" content="Capture, annotate, and export high-quality screenshots of any webpage — visible area, full page, or custom selection.">
+  <link rel="icon" href="https://gauravlabs.com/extensions/screencrafter-logo.svg">
+  <link rel="stylesheet" href="style.css">
+  <script src="browser-detect.js"></script>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav" id="nav">
+  <div class="container">
+    <a href="/" class="nav-logo">
+      <img src="https://gauravlabs.com/extensions/screencrafter-logo.svg" alt="Screencrafter">
+      <span>Screencrafter</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#gallery">Gallery</a></li>
+      <li><a href="#editor">Editor</a></li>
+      <li><a href="/privacy">Privacy</a></li>
+      <li><a href="https://github.com/gauravvyadav/screencrafter" class="btn btn-outline" target="_blank">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+        <span>GitHub</span>
+      </a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow"></div>
+  <div class="hero-glow-2"></div>
+
+  <div class="container">
+    <div class="hero-left">
+      <div class="hero-badge">
+        <div class="hero-badge-dot"></div>
+        <span>Chrome · Edge · Firefox</span>
+      </div>
+
+      <h1 class="hero-title">Screenshot<br><span>anything</span><br>on the web.</h1>
+
+      <p class="hero-subtitle">Capture, annotate, and export high-quality screenshots of any webpage - visible area, full page, or custom selection.</p>
+
+      <div class="hero-actions">
+        <a href="#" class="btn btn-primary" target="_blank" data-browser-link>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <img data-browser-icon src="/assets/browsers/chrome.png" width="20" height="20" alt="Browser Icon">
+          <span>Add to <span data-browser-name>Chrome</span> — Free</span>
+        </a>
+        <a href="#features" class="btn btn-outline">Learn More</a>
+      </div>
+
+      <div class="hero-pills">
+        <div class="pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Visible Area
+        </div>
+        <div class="pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+          Full Page
+        </div>
+        <div class="pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v6"/><path d="M18 2v6"/><path d="M2 6h20"/><path d="M6 22v-6"/><path d="M18 22v-6"/><path d="M2 18h20"/></svg>
+          Select Area
+        </div>
+        <div class="pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+          Gallery
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <img src="/assets/extension/screencrafter-popup.png" alt="Screencrafter Popup" style="width:100%; border-radius:20px; box-shadow:0 40px 100px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.1);">
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+  <div class="container">
+    <div class="section-label">Three Ways to Capture</div>
+    <h2 class="section-title">Choose your <span>capture mode</span>,<br>download instantly.</h2>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="card-num">01</div>
+        <div class="card-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>Visible Area</h3>
+        <p>Instantly capture exactly what you see — no scrolling required. Perfect for quick grabs of the current viewport.</p>
+        <div class="feature-tag">✓ Instant</div>
+      </div>
+
+      <div class="feature-card">
+        <div class="card-num">02</div>
+        <div class="card-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+        </div>
+        <h3>Full Page</h3>
+        <p>Capture the entire scrollable page in one shot — up to 40,000px tall. Set a max height to prevent runaway captures.</p>
+        <div class="feature-tag">✓ Up to 40,000px</div>
+      </div>
+
+      <div class="feature-card">
+        <div class="card-num">03</div>
+        <div class="card-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2v6"/><path d="M18 2v6"/><path d="M2 6h20"/><path d="M6 22v-6"/><path d="M18 22v-6"/><path d="M2 18h20"/></svg>
+        </div>
+        <h3>Select Area</h3>
+        <p>Draw a selection box on any part of the page, crop precisely, and download — no editing software needed.</p>
+        <div class="feature-tag">✓ Crop & Download</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- GALLERY -->
+<section class="gallery-section" id="gallery">
+  <div class="container">
+    <div class="gallery-left">
+      <div class="section-label">Screenshot Gallery</div>
+      <h2 class="gallery-headline">All your<br>captures,<br><span>one place.</span></h2>
+      <p class="gallery-desc">Browse, search, and manage every screenshot you've ever taken — right inside your browser.</p>
+      <ul class="check-list">
+        <li><span class="check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg></span> Search captures by page title</li>
+        <li><span class="check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg></span> Grid & list view modes</li>
+        <li><span class="check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg></span> Open in editor for annotation</li>
+        <li><span class="check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg></span> Sort by newest or oldest</li>
+        <li><span class="check-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg></span> One-click delete or clear all</li>
+      </ul>
+    </div>
+    <div class="gallery-right">
+      <img src="/assets/extension/screencrafter-gallery.png" class="gallery-mockup" alt="Screencrafter Gallery" style="box-shadow: 0 30px 80px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);">
+    </div>
+  </div>
+</section>
+
+<!-- EDITOR -->
+<section class="editor-section" id="editor">
+  <div class="container">
+    <div class="section-label">Built-in Editor</div>
+    <h2 class="section-title">Polish & export as <span>PNG or PDF.</span></h2>
+
+    <img src="/assets/extension/screencrafter-editor.png" class="editor-mockup" alt="Screencrafter Editor" style="box-shadow: 0 20px 80px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.05); width: 100%; border-radius: 16px;">
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <div class="cta-glow"></div>
+  <div class="container">
+    <div class="cta-icon">
+      <img src="https://gauravlabs.com/extensions/screencrafter-logo.svg" alt="Screencrafter" style="width:50px;height:50px;border-radius:14px;">
+    </div>
+
+    <h2 class="cta-title">The screenshot tool<br>Browsers were <span>missing.</span></h2>
+    <p class="cta-sub">Free, fast, and built for the web. Full control over how you capture, organize, and export web screenshots.</p>
+
+    <div class="stats-row">
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">Capture Modes</div></div>
+      <div class="stat-divider"></div>
+      <div class="stat"><div class="stat-num">40000px</div><div class="stat-label">Max Page Height</div></div>
+      <div class="stat-divider"></div>
+      <div class="stat"><div class="stat-num" style="font-size:28px;">PNG+PDF</div><div class="stat-label">Export Formats</div></div>
+      <div class="stat-divider"></div>
+      <div class="stat"><div class="stat-num">Free</div><div class="stat-label">Always</div></div>
+    </div>
+
+    <div class="cta-badges">
+      <div class="cta-badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> No sign-up required</div>
+      <div class="cta-badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Works on any website</div>
+      <div class="cta-badge"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> PNG & PDF export</div>
+    </div>
+
+    <a href="#" class="btn btn-primary" target="_blank" style="font-size:16px;padding:14px 32px;" data-browser-link>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <img data-browser-icon src="/assets/browsers/chrome.png" width="24" height="24" alt="Browser Icon">
+      <span>Add to <span data-browser-name>Chrome</span> — It's Free</span>
+    </a>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="container footer-inner">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <img src="https://gauravlabs.com/extensions/screencrafter-logo.svg" width="20" height="20" style="border-radius:5px;" alt="">
+      <span style="font-family:'Clash Display',sans-serif;font-size:14px;font-weight:600;color:var(--text-dim);">Screencrafter</span>
+    </div>
+    <ul class="footer-links">
+      <li><a href="/privacy">Privacy Policy</a></li>
+      <li><a href="https://github.com/gauravvyadav/screencrafter" target="_blank">GitHub</a></li>
+      <li><a href="https://gauravlabs.com" target="_blank">Gaurav Labs</a></li>
+    </ul>
+    <span class="footer-copy">&copy; 2026 Gaurav Labs</span>
+  </div>
+</footer>
+
+<script>
+  // Sticky nav
+  const nav = document.getElementById('nav');
+  window.addEventListener('scroll', () => {
+    nav.classList.toggle('scrolled', window.scrollY > 40);
+  });
+</script>
+</body>
+</html>

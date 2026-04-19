@@ -1,0 +1,8 @@
+{
+  "chrome": "https://chromewebstore.google.com",
+  "edge": "https://microsoftedge.microsoft.com/addons",
+  "firefox": "https://addons.mozilla.org",
+  "brave": "https://chromewebstore.google.com",
+  "chromium": "https://chromewebstore.google.com",
+  "default": "https://chromewebstore.google.com"
+}
