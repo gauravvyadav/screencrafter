@@ -39,9 +39,14 @@ export default defineBackground(() => {
         target: { tabId },
         files: ['/content-scripts/content.js'],
       });
-      // Wait a moment for the script to initialize
-      await new Promise(r => setTimeout(r, 200));
-      return true;
+      
+      // Wait up to 500ms for the script to initialize (poll every 50ms)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 50));
+        const response = await browser.tabs.sendMessage(tabId, { type: 'PING' }).catch(() => null);
+        if (response === 'PONG') return true;
+      }
+      return false;
     } catch (err) {
       console.warn('Cannot inject content script into tab', tabId, err);
       return false;
@@ -53,22 +58,23 @@ export default defineBackground(() => {
     const isFromTab = sender.tab?.id;
     if (!isFromExtension && !isFromTab) return;
     if (message.type === 'CAPTURE_VISIBLE') {
-      handleCaptureVisible();
+      handleCaptureVisible().then(() => sendResponse({}));
       return true;
     }
 
     if (message.type === 'CAPTURE_FULL_PAGE') {
-      handleFullPageCaptureScroll();
+      handleFullPageCaptureScroll().then(() => sendResponse({}));
       return true;
     }
 
     if (message.type === 'CAPTURE_AREA') {
-      handleAreaCapture();
+      handleAreaCapture().then(() => sendResponse({}));
       return true;
     }
     
     if (message.type === 'OPEN_DASHBOARD') {
        browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
+       sendResponse({});
        return true;
     }
   });

@@ -51,9 +51,9 @@ function App() {
     browser.storage.local.set({ maxCaptureHeight: val });
   };
 
-  const handleCaptureVisible = () => { sendMessage({ type: 'CAPTURE_VISIBLE' }); window.close(); };
-  const handleFullPageCapture = () => { sendMessage({ type: 'CAPTURE_FULL_PAGE' }); window.close(); };
-  const handleAreaCapture = () => { sendMessage({ type: 'CAPTURE_AREA' as any }); window.close(); };
+  const handleCaptureVisible = async () => { await sendMessage({ type: 'CAPTURE_VISIBLE' }); window.close(); };
+  const handleFullPageCapture = async () => { await sendMessage({ type: 'CAPTURE_FULL_PAGE' }); window.close(); };
+  const handleAreaCapture = async () => { await sendMessage({ type: 'CAPTURE_AREA' as any }); window.close(); };
   const handleOpenDashboard = () => sendMessage({ type: 'OPEN_DASHBOARD' });
 
   return (
