@@ -1,8 +1,8 @@
 {
-  "chrome": "https://chromewebstore.google.com",
+  "chrome": "https://chromewebstore.google.com/detail/full-page-screenshot-tool/enmnnnddninomcgmojejldmbdhijdmnl",
   "edge": "https://microsoftedge.microsoft.com/addons",
   "firefox": "https://addons.mozilla.org",
-  "brave": "https://chromewebstore.google.com",
-  "chromium": "https://chromewebstore.google.com",
-  "default": "https://chromewebstore.google.com"
+  "brave": "https://chromewebstore.google.com/detail/full-page-screenshot-tool/enmnnnddninomcgmojejldmbdhijdmnl",
+  "chromium": "https://chromewebstore.google.com/detail/full-page-screenshot-tool/enmnnnddninomcgmojejldmbdhijdmnl",
+  "default": "https://chromewebstore.google.com/detail/full-page-screenshot-tool/enmnnnddninomcgmojejldmbdhijdmnl"
 }
