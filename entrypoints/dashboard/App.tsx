@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
   Trash2, Search, Image as ImageIcon, ExternalLink,
   Grid3X3, LayoutList, Clock, Globe,
-  Camera, X, ChevronDown
+  Camera, X, ChevronDown, Upload
 } from 'lucide-react';
 import { useTheme } from '@/hooks/useTheme';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -23,6 +23,7 @@ function App() {
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [selectedCapture, setSelectedCapture] = useState<CaptureItem | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     browser.storage.local.get(['captureHistory']).then((res: any) => {
@@ -57,6 +58,34 @@ function App() {
     setCaptures([]);
     browser.storage.local.set({ captureHistory: [] });
     setSelectedCapture(null);
+    setDeleteConfirm(null);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const newCapture: CaptureItem = {
+          id: Math.random().toString(36).substr(2, 9),
+          image: event.target?.result as string,
+          fullWidth: img.naturalWidth,
+          fullHeight: img.naturalHeight,
+          title: file.name.replace(/\.[^/.]+$/, ''),
+          timestamp: Date.now(),
+          url: 'local-upload',
+          type: 'upload'
+        };
+        const updated = [newCapture, ...captures].slice(0, 50);
+        setCaptures(updated);
+        browser.storage.local.set({ captureHistory: updated });
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   const filteredCaptures = useMemo(() => {
@@ -130,6 +159,23 @@ function App() {
                 </button>
               )}
             </div>
+
+            {/* Upload */}
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                isDark ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'
+              }`}
+            >
+              <Upload size={16} />
+            </button>
+            <input 
+              ref={fileInputRef}
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              onChange={handleImageUpload}
+            />
 
             <div className={`h-6 w-px mx-1 ${isDark ? 'bg-white/5' : 'bg-gray-200'}`} />
 

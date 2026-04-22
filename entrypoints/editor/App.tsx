@@ -3,7 +3,8 @@ import {
   Download, Type, Square, MousePointer, 
   Image as ImageIcon, ChevronLeft, LayoutGrid, ChevronDown, FileImage, FileText,
   Trash2, Plus, Minus, Undo2, Redo2, Pipette,
-  EyeOff, RefreshCcw, ArrowUpRight, Move, Droplets
+  EyeOff, RefreshCcw, ArrowUpRight, Droplets, Circle, Minus as MinusIcon, Highlighter,
+  ArrowUp, ArrowDown, Upload, PaintBucket
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
@@ -12,7 +13,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 
 // --- Types ---
 
-type Tool = 'select' | 'text' | 'blur' | 'arrow' | 'rect';
+type Tool = 'select' | 'text' | 'blur' | 'arrow' | 'rect' | 'circle' | 'line' | 'highlighter' | 'fill';
 
 interface Annotation {
   id: string;
@@ -28,8 +29,14 @@ interface Annotation {
   color?: string;
   strokeWidth?: number;
   fontWeight?: string;
+  fontStyle?: string;
+  textBackgroundColor?: string;
   blurMode?: string;
   blurAmount?: number;
+  opacity?: number;
+  strokePreset?: 'thin' | 'medium' | 'thick';
+  fill?: boolean;
+  highlighter?: boolean;
 }
 
 interface EditorState {
@@ -68,7 +75,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [fileName, setFileName] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'png' | 'pdf'>('png');
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpeg' | 'webp' | 'pdf'>('png');
   
   const [editor, setEditor] = useState<EditorState>({
     padding: 0,
@@ -85,6 +92,7 @@ function App() {
   const exportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isDrawing = useRef(false);
   const startPos = useRef({ x: 0, y: 0 });
 
@@ -146,6 +154,18 @@ function App() {
       });
     }
   }, [data]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        e.preventDefault();
+        deleteAnnotation(selectedId);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedId]);
   const stitchFragments = async (cap: any): Promise<string> => {
     console.log('Editor: Stitching with metadata', { 
       fragments: cap.fragments.length, 
@@ -269,16 +289,29 @@ function App() {
       y,
       x2: x,
       y2: y,
-      width: 0,
-      height: 0,
-      color: '#3b82f6',
-      fontSize: 32,
-      fontWeight: 'bold',
-      text: editor.activeTool === 'text' ? 'Type something...' : ''
+      width: editor.activeTool === 'text' ? 100 : 0,
+      height: editor.activeTool === 'text' ? 32 : 0,
+      color: editor.activeTool === 'fill' ? '#3b82f6' : '#3b82f6',
+      fontSize: 24,
+      fontWeight: 'normal',
+      text: editor.activeTool === 'text' ? '' : '',
+      strokePreset: 'medium',
+      strokeWidth: 3,
+      opacity: 1,
+      fill: editor.activeTool === 'fill',
+      highlighter: editor.activeTool === 'highlighter'
     };
 
     setAnnotations([...annotations, newAnn]);
     setSelectedId(newId);
+    
+    // Auto-focus text for immediate editing
+    if (editor.activeTool === 'text') {
+      setTimeout(() => {
+        const el = document.querySelector('.contenteditable-root');
+        if (el) (el as HTMLElement).focus();
+      }, 10);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -292,18 +325,33 @@ function App() {
       setAnnotations(prev => prev.map(a => {
         if (a.id !== resizingId.id) return a;
         
-        if (a.type === 'arrow') {
+        if (a.type === 'arrow' || a.type === 'line') {
           if (resizingId.handle === 'start') {
             return { ...a, x: currentX, y: currentY };
           } else {
             return { ...a, x2: currentX, y2: currentY };
           }
         } else {
-          return { 
-            ...a, 
-            width: Math.max(10, currentX - a.x), 
-            height: Math.max(10, currentY - a.y) 
-          };
+          const currentW = a.width || 0;
+          const currentH = a.height || 0;
+          if (resizingId.handle === 'se') {
+            return { ...a, width: Math.max(10, currentX - a.x), height: Math.max(10, currentY - a.y) };
+          } else if (resizingId.handle === 'ne') {
+            return { ...a, y: currentY, height: Math.max(10, (a.y + currentH) - currentY) };
+          } else if (resizingId.handle === 'sw') {
+            return { ...a, x: currentX, width: Math.max(10, (a.x + currentW) - currentX), height: Math.max(10, currentY - a.y) };
+          } else if (resizingId.handle === 'nw') {
+            return { ...a, x: currentX, y: currentY, width: Math.max(10, (a.x + currentW) - currentX), height: Math.max(10, (a.y + currentH) - currentY) };
+          } else if (resizingId.handle === 'n') {
+            return { ...a, y: currentY, height: Math.max(10, (a.y + currentH) - currentY) };
+          } else if (resizingId.handle === 's') {
+            return { ...a, height: Math.max(10, currentY - a.y) };
+          } else if (resizingId.handle === 'w') {
+            return { ...a, x: currentX, width: Math.max(10, (a.x + currentW) - currentX) };
+          } else if (resizingId.handle === 'e') {
+            return { ...a, width: Math.max(10, currentX - a.x) };
+          }
+          return { ...a, width: Math.max(10, currentX - a.x), height: Math.max(10, currentY - a.y) };
         }
       }));
       return;
@@ -316,7 +364,7 @@ function App() {
         const dx = currentX - (a.x + dragOffset.current.x);
         const dy = currentY - (a.y + dragOffset.current.y);
         
-        if (a.type === 'arrow') {
+        if (a.type === 'arrow' || a.type === 'line') {
           return { 
             ...a, 
             x: currentX - dragOffset.current.x, 
@@ -340,14 +388,14 @@ function App() {
     setAnnotations(prev => prev.map(a => {
       if (a.id !== selectedId) return a;
       
-      if (a.type === 'arrow') {
+      if (a.type === 'arrow' || a.type === 'line') {
         return { ...a, x2: currentX, y2: currentY };
       } else {
         const width = Math.abs(currentX - startPos.current.x);
         const height = Math.abs(currentY - startPos.current.y);
         const x = Math.min(currentX, startPos.current.x);
         const y = Math.min(currentY, startPos.current.y);
-        return { ...a, x, y, width, height };
+        return { ...a, x, y, width: Math.max(10, width), height: Math.max(10, height) };
       }
     }));
   };
@@ -359,13 +407,15 @@ function App() {
     isDrawing.current = false;
     setIsDragging(false);
     setResizingId(null);
+    
+    // Switch back to select tool after creating text (so user can drag it)
+    if (editor.activeTool === 'text') {
+      setEditor(prev => ({ ...prev, activeTool: 'select' }));
+    }
   };
 
   const updateAnnotation = (id: string, updates: Partial<Annotation>) => {
-    const newAnns = annotations.map(a => a.id === id ? { ...a, ...updates } : a);
-    setAnnotations(newAnns);
-    // Note: We don't save to history here because sliders would spam it. 
-    // We rely on MouseUp or specific property commit points.
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
   };
 
   const deleteAnnotation = (id: string) => {
@@ -375,7 +425,7 @@ function App() {
     setSelectedId(null);
   };
 
-  const handleExport = async (format: 'png' | 'pdf' = 'png') => {
+  const handleExport = async (format: 'png' | 'jpeg' | 'webp' | 'pdf' = 'png') => {
     if (!exportRef.current) return;
     setExportMenuOpen(false);
     const originalZoom = editor.zoom;
@@ -398,12 +448,30 @@ function App() {
           const img = new Image();
           img.src = dataUrl;
           await new Promise(r => img.onload = r);
-          const pxToMm = 0.264583;
-          const w = img.naturalWidth * pxToMm;
-          const h = img.naturalHeight * pxToMm;
-          const pdf = new jsPDF({ orientation: w > h ? 'landscape' : 'portrait', unit: 'mm', format: [w, h] });
-          pdf.addImage(dataUrl, 'PNG', 0, 0, w, h);
-          pdf.save(`${finalName}.pdf`);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            const jpgDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+            const pxToMm = 0.264583;
+            const w = canvas.width * pxToMm;
+            const h = canvas.height * pxToMm;
+            const pdf = new jsPDF({ orientation: w > h ? 'landscape' : 'portrait', unit: 'mm', format: [w, h] });
+            pdf.addImage(jpgDataUrl, 'JPEG', 0, 0, w, h, undefined, 'FAST');
+            pdf.save(`${finalName}.pdf`);
+          }
+        } else if (format === 'jpeg') {
+          const link = document.createElement('a');
+          link.download = `${finalName}.jpg`;
+          link.href = dataUrl.replace('image/png', 'image/jpeg').replace('data:image', 'data:image/jpeg');
+          link.click();
+        } else if (format === 'webp') {
+          const link = document.createElement('a');
+          link.download = `${finalName}.webp`;
+          link.href = dataUrl.replace('image/png', 'image/webp').replace('data:image', 'data:image/webp');
+          link.click();
         } else {
           const link = document.createElement('a');
           link.download = `${finalName}.png`;
@@ -415,6 +483,57 @@ function App() {
         setSelectedId(originalSelectedId);
       }
     }, 200);
+  };
+
+  const handleCopyToClipboard = async () => {
+    if (!exportRef.current) return;
+    setSelectedId(null);
+    setEditor(prev => ({ ...prev, zoom: 1 }));
+    
+    setTimeout(async () => {
+      try {
+        const dataUrl = await toPng(exportRef.current!, { 
+          quality: 1.0, 
+          pixelRatio: 2,
+          skipFonts: true
+        });
+        
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      } finally {
+        setEditor(prev => ({ ...prev, zoom: editor.zoom }));
+      }
+    }, 200);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        setStitchedImage(event.target?.result as string);
+        setData({
+          image: event.target?.result as string,
+          fullWidth: img.naturalWidth,
+          fullHeight: img.naturalHeight,
+          title: file.name.replace(/\.[^/.]+$/, ''),
+          timestamp: Date.now()
+        });
+        setFileName(file.name.replace(/\.[^/.]+$/, ''));
+        setAnnotations([]);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   const selectedAnn = annotations.find(a => a.id === selectedId);
@@ -442,6 +561,20 @@ function App() {
           >
             <LayoutGrid size={18} className="group-hover:text-blue-500 transition-colors" />
           </button>
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-2 rounded-lg transition-all group ${isDark ? 'hover:bg-white/5 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
+            title="Upload Image"
+          >
+            <Upload size={18} className="group-hover:text-blue-500 transition-colors" />
+          </button>
+          <input 
+            ref={fileInputRef}
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            onChange={handleImageUpload}
+          />
           <div className={`h-6 w-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}></div>
           {/* Undo / Redo */}
           <div className="flex items-center gap-1">
@@ -460,6 +593,14 @@ function App() {
               title="Redo (Ctrl+Y)"
             >
               <Redo2 size={18} />
+            </button>
+            <button 
+              onClick={() => { setAnnotations([]); setSelectedId(null); saveToHistory([]); }} 
+              disabled={annotations.length === 0}
+              className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-white/5 text-gray-400' : 'hover:bg-gray-100 text-gray-500'} disabled:opacity-20 disabled:cursor-not-allowed`}
+              title="Clear All"
+            >
+              <Trash2 size={18} />
             </button>
           </div>
         </div>
@@ -503,12 +644,22 @@ function App() {
             {exportMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
-                <div className={`absolute right-0 top-full mt-2 w-44 rounded-xl border shadow-2xl z-50 overflow-hidden ${isDark ? 'bg-[#1e1e24] border-white/10' : 'bg-white border-gray-200'}`}>
+                <div className={`absolute right-0 top-full mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${isDark ? 'bg-[#1e1e24] border-white/10' : 'bg-white border-gray-200'}`}>
                   <button onClick={() => { setExportFormat('png'); handleExport('png'); }} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
-                    <FileImage size={15} className="text-blue-500" /> Export as PNG
+                    <FileImage size={15} className="text-blue-500" /> PNG Image
                   </button>
+                  <button onClick={() => { setExportFormat('jpeg'); handleExport('jpeg'); }} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
+                    <FileImage size={15} className="text-orange-500" /> JPEG Image
+                  </button>
+                  <button onClick={() => { setExportFormat('webp'); handleExport('webp'); }} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
+                    <FileImage size={15} className="text-green-500" /> WebP Image
+                  </button>
+                  <button onClick={() => handleCopyToClipboard()} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
+                    <FileImage size={15} className="text-purple-500" /> Copy to Clipboard
+                  </button>
+                  <div className={`border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`} />
                   <button onClick={() => { setExportFormat('pdf'); handleExport('pdf'); }} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
-                    <FileText size={15} className="text-red-500" /> Export as PDF
+                    <FileText size={15} className="text-red-500" /> PDF Document
                   </button>
                 </div>
               </>
@@ -537,6 +688,9 @@ function App() {
                     <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
                       {selectedAnn.type === 'text' && <Type size={20} />}
                       {selectedAnn.type === 'rect' && <Square size={20} />}
+                      {selectedAnn.type === 'circle' && <Circle size={20} />}
+                      {selectedAnn.type === 'line' && <MinusIcon size={20} />}
+                      {selectedAnn.type === 'highlighter' && <Highlighter size={20} />}
                       {selectedAnn.type === 'arrow' && <ArrowUpRight size={20} />}
                       {selectedAnn.type === 'blur' && <EyeOff size={20} />}
                     </div>
@@ -619,16 +773,48 @@ function App() {
                           className={`w-full bg-transparent border rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500/50 h-32 resize-none ${isDark ? 'border-white/10' : 'border-gray-200'}`}
                         />
                       </div>
-                      <div className="flex items-center justify-between">
-                         <span className="text-xs opacity-60 font-medium">Font Weight</span>
-                         <button onClick={() => updateAnnotation(selectedAnn.id, { fontWeight: selectedAnn.fontWeight === 'bold' ? 'normal' : 'bold' })} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedAnn.fontWeight === 'bold' ? 'bg-blue-600 text-white' : isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-100 text-gray-600'}`}>
-                            {selectedAnn.fontWeight === 'bold' ? 'Bold' : 'Regular'}
+<div className="flex items-center justify-between">
+                         <span className="text-xs opacity-60 font-medium">Bold</span>
+                         <button onClick={() => updateAnnotation(selectedAnn.id, { fontWeight: selectedAnn.fontWeight === 'bold' ? 'normal' : 'bold' })} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedAnn.fontWeight === 'bold' ? 'bg-blue-600 text-white' : isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-100 text-gray-600'}`}>
+                            {selectedAnn.fontWeight === 'bold' ? 'On' : 'Off'}
                          </button>
-                      </div>
-                    </div>
-                  )}
+                       </div>
+                       <div className="flex items-center justify-between">
+                         <span className="text-xs opacity-60 font-medium">Italic</span>
+                         <button onClick={() => updateAnnotation(selectedAnn.id, { fontStyle: selectedAnn.fontStyle === 'italic' ? 'normal' : 'italic' })} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedAnn.fontStyle === 'italic' ? 'bg-blue-600 text-white' : isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-100 text-gray-600'}`}>
+                            {selectedAnn.fontStyle === 'italic' ? 'On' : 'Off'}
+                         </button>
+                       </div>
+                       <div>
+                         <span className="text-xs opacity-60 font-medium mb-2 block">Text Color</span>
+                         <div className="grid grid-cols-5 gap-1.5">
+                           {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#ffffff', '#000000', '#ec4899', '#8b5cf6', '#06b6d4', '#4b5563'].map(c => (
+                             <button 
+                               key={c} 
+                               onClick={() => updateAnnotation(selectedAnn.id, { color: c })} 
+                               className={`aspect-square rounded-full border-2 transition-all ${selectedAnn.color === c ? 'border-blue-500 scale-110 shadow-md' : 'border-transparent shadow-sm'}`} 
+                               style={{ backgroundColor: c }} 
+                             />
+                           ))}
+                         </div>
+                       </div>
+                       <div>
+                         <span className="text-xs opacity-60 font-medium mb-2 block">Background</span>
+                         <div className="grid grid-cols-5 gap-1.5">
+                           {['transparent', '#fef3c7', '#fce7f3', '#dbeafe', '#fee2e2', '#ecfdf5', '#fef08a', '#e9d5ff', '#fff7ed', '#374151'].map(c => (
+                             <button 
+                               key={c} 
+                               onClick={() => updateAnnotation(selectedAnn.id, { textBackgroundColor: c })} 
+                               className={`aspect-square rounded-full border-2 transition-all ${selectedAnn.textBackgroundColor === c || (!selectedAnn.textBackgroundColor && c === 'transparent') ? 'border-blue-500 scale-110 shadow-md' : 'border-transparent shadow-sm'}`} 
+                               style={{ backgroundColor: c === 'transparent' ? 'transparent' : (c === 'transparent' ? 'transparent' : c)}} 
+                             />
+                           ))}
+                         </div>
+                       </div>
+                     </div>
+                   )}
 
-                  {/* Color Picker for everything except Blur */}
+{/* Color Picker for everything except Blur */}
                   {selectedAnn.type !== 'blur' && (
                     <div>
                       <div className="flex justify-between mb-3">
@@ -657,6 +843,51 @@ function App() {
                       </div>
                     </div>
                   )}
+                   {(selectedAnn.type === 'rect' || selectedAnn.type === 'circle' || selectedAnn.type === 'line' || selectedAnn.type === 'arrow' || selectedAnn.type === 'highlighter' || selectedAnn.type === 'fill') && (
+                     <div>
+                       <span className="text-xs opacity-60 font-medium mb-3 block">Stroke Width</span>
+                       <div className={`grid grid-cols-3 gap-2 p-1 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+                         {[
+                           { id: 'thin', label: 'S', w: 1 },
+                           { id: 'medium', label: 'M', w: 3 },
+                           { id: 'thick', label: 'L', w: 5 }
+                         ].map(preset => (
+                           <button 
+                             key={preset.id} 
+                             onClick={() => {
+                               updateAnnotation(selectedAnn.id, { strokePreset: preset.id as 'thin' | 'medium' | 'thick', strokeWidth: preset.w });
+                             }} 
+                             className={`flex flex-col items-center gap-1.5 py-2.5 rounded-lg transition-all ${
+                               selectedAnn.strokePreset === preset.id || (selectedAnn.strokePreset === undefined && preset.id === 'medium')
+                                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' 
+                                 : 'text-gray-400 hover:text-gray-600 hover:bg-black/5'
+                             }`}
+                           >
+                             <span className="text-[9px] font-bold">{preset.label}</span>
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+                   )}
+
+                   {/* Opacity Control */}
+                   {(selectedAnn.type === 'rect' || selectedAnn.type === 'circle' || selectedAnn.type === 'line' || selectedAnn.type === 'arrow' || selectedAnn.type === 'highlighter' || selectedAnn.type === 'fill') && (
+                     <div>
+                       <div className="flex justify-between mb-3">
+                         <span className="text-xs opacity-60 font-medium">Opacity</span>
+                         <span className="text-xs font-mono text-blue-500 font-bold">{Math.round((selectedAnn.opacity ?? 1) * 100)}%</span>
+                       </div>
+                       <input 
+                         type="range" 
+                         min="0.1" 
+                         max="1" 
+                         step="0.1" 
+                         value={selectedAnn.opacity ?? 1} 
+                         onChange={(e) => updateAnnotation(selectedAnn.id, { opacity: parseFloat(e.target.value) })} 
+                         className="w-full accent-blue-600 h-1.5 bg-blue-600/10 rounded-lg cursor-pointer appearance-none" 
+                       />
+                     </div>
+                   )}
 
                   {selectedAnn.type === 'text' && (
                     <div>
@@ -677,6 +908,40 @@ function App() {
                   )}
 
                   <div className="pt-8">
+                    {/* Layer Ordering */}
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <button 
+                        onClick={() => {
+                          const idx = annotations.findIndex(a => a.id === selectedAnn.id);
+                          if (idx < annotations.length - 1) {
+                            const newAnns = [...annotations];
+                            [newAnns[idx], newAnns[idx + 1]] = [newAnns[idx + 1], newAnns[idx]];
+                            setAnnotations(newAnns);
+                          }
+                        }} 
+                        className={`py-2.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                          isDark ? 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        <ArrowUp size={14} /> Forward
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const idx = annotations.findIndex(a => a.id === selectedAnn.id);
+                          if (idx > 0) {
+                            const newAnns = [...annotations];
+                            [newAnns[idx], newAnns[idx - 1]] = [newAnns[idx - 1], newAnns[idx]];
+                            setAnnotations(newAnns);
+                          }
+                        }} 
+                        className={`py-2.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+                          isDark ? 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        <ArrowDown size={14} /> Back
+                      </button>
+                    </div>
+                    
                     <button 
                       onClick={() => deleteAnnotation(selectedAnn.id)} 
                       className="w-full py-3.5 bg-red-500 text-white rounded-xl text-xs font-bold hover:bg-red-600 transition-all active:scale-95 flex items-center justify-center gap-2"
@@ -756,7 +1021,7 @@ function App() {
                 {captureHistory.length > 0 && (
                   <section className="pt-4 border-t border-white/5">
                     <h3 className={`text-[11px] uppercase font-bold tracking-widest mb-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Recent Captures</h3>
-                    <div className="grid grid-cols-2 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="grid grid-cols-2 gap-3 max-h-75 overflow-y-auto pr-2 custom-scrollbar">
                       {captureHistory.map((cap) => (
                         <button 
                           key={cap.id} 
@@ -818,44 +1083,53 @@ function App() {
       <div 
         ref={canvasRef}
         onMouseDown={handleMouseDown} 
-        className={`relative overflow-hidden min-w-[800px] ${editor.activeTool !== 'select' ? 'cursor-crosshair' : ''}`}
+        className={`relative overflow-hidden min-w-200 ${editor.activeTool !== 'select' ? 'cursor-crosshair' : ''}`}
       >
         {stitchedImage && <img src={stitchedImage} alt="Capture" className="w-full h-auto block select-none pointer-events-none" />}
                   {annotations.map(ann => (
                     <div 
                       key={ann.id} 
                       onMouseDown={(e) => {
-                        e.stopPropagation();
-                        setSelectedId(ann.id);
-                        
-                        // Only start dragging if not clicking the text to edit (or if using the select tool)
-                        // If it's a text annotation and we are already selected, let the click through to the text
-                        if (ann.type === 'text' && selectedId === ann.id && editor.activeTool !== 'select') {
-                          return; 
-                        }
-
-                        setIsDragging(true);
-                        const rect = canvasRef.current?.getBoundingClientRect();
-                        if (rect) {
-                          const mouseX = (e.clientX - rect.left) / editor.zoom;
-                          const mouseY = (e.clientY - rect.top) / editor.zoom;
-                          dragOffset.current = { x: mouseX - ann.x, y: mouseY - ann.y };
+                        // Only stop propagation when in select mode - otherwise let click pass to canvas to create new shape
+                        if (editor.activeTool === 'select') {
+                          e.stopPropagation();
+                          setSelectedId(ann.id);
+                          setIsDragging(true);
+                          const rect = canvasRef.current?.getBoundingClientRect();
+                          if (rect) {
+                            const mouseX = (e.clientX - rect.left) / editor.zoom;
+                            const mouseY = (e.clientY - rect.top) / editor.zoom;
+                            dragOffset.current = { x: mouseX - ann.x, y: mouseY - ann.y };
+                          }
+                        } else {
+                          // When not in select mode, don't stop propagation - canvas will create new shape
+                          // But we need to set selectedId first so it works properly
+                          setSelectedId(ann.id);
                         }
                       }}
-                      onClick={(e) => { e.stopPropagation(); }} 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        // Double click to start editing text
+                        if (selectedId === ann.id && ann.type === 'text') {
+                          const el = e.currentTarget.querySelector('[contenteditable]');
+                          if (el) (el as HTMLElement).focus();
+                        }
+                      }} 
                       style={{ 
                         position: 'absolute', 
-                        left: ann.type === 'arrow' ? 0 : ann.x, 
-                        top: ann.type === 'arrow' ? 0 : ann.y, 
-                        width: (ann.type === 'blur' || ann.type === 'rect') ? ann.width : (ann.type === 'arrow' ? '100%' : 'auto'), 
-                        height: (ann.type === 'blur' || ann.type === 'rect') ? ann.height : (ann.type === 'arrow' ? '100%' : 'auto'), 
-                        border: (selectedId === ann.id && ann.type !== 'arrow') ? '2px solid #3b82f6' : (ann.type === 'rect' ? `2px solid ${ann.color}` : 'none'), 
-                        cursor: ann.type === 'arrow' ? 'inherit' : 'move', 
+                        left: (ann.type === 'arrow' || ann.type === 'line') ? 0 : ann.x, 
+                        top: (ann.type === 'arrow' || ann.type === 'line') ? 0 : ann.y, 
+                        width: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill') ? ann.width : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
+                        height: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill') ? ann.height : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
+                        border: (selectedId === ann.id && ann.type !== 'arrow' && ann.type !== 'line') ? `2px solid ${ann.color || '#3b82f6'}` : ((ann.type === 'rect' || ann.type === 'circle') ? `2px solid ${ann.color}` : 'none'), 
+                        borderRadius: ann.type === 'circle' ? '50%' : ann.type === 'highlighter' ? '4px' : '0',
+                        backgroundColor: ann.highlighter ? 'rgba(255, 255, 0, 0.35)' : (ann.fill ? (ann.color || '#3b82f6') : (ann.type === 'blur' ? (ann.blurMode === 'color' ? (ann.color || '#000000') : 'transparent') : 'transparent')),
+                        cursor: (ann.type === 'arrow' || ann.type === 'line') ? 'inherit' : 'move', 
                         zIndex: 10,
-                        pointerEvents: (ann.type === 'arrow' || (ann.type === 'text' && selectedId === ann.id)) ? 'none' : 'auto',
+                        opacity: ann.opacity ?? 1,
+                        pointerEvents: ((ann.type === 'arrow' || ann.type === 'line')) ? 'none' : 'auto',
                         // Advanced Redaction Modes
                         ...(ann.type === 'blur' ? {
-                          backgroundColor: ann.blurMode === 'color' ? (ann.color || '#000000') : 'transparent',
                           backdropFilter: (ann.blurMode === 'blur' || !ann.blurMode) 
                             ? `blur(${ann.blurAmount || 20}px)` 
                             : 'none',
@@ -864,40 +1138,24 @@ function App() {
                       className={`${ann.type === 'blur' ? 'shadow-inner' : ''}`}
                     >
                       {selectedId === ann.id && (
-                        <div className="pointer-events-auto">
-                          {/* Move Handle (Top-Left) */}
-                          <div 
-                            className="absolute -top-3 -left-3 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg cursor-move z-30 active:scale-95 transition-transform"
-                            style={{ 
-                              // For arrows, position the move handle near the start point
-                              left: ann.type === 'arrow' ? ann.x - 12 : -12,
-                              top: ann.type === 'arrow' ? ann.y - 12 : -12
-                            }}
-                            onMouseDown={(e) => {
-                              e.stopPropagation();
-                              setSelectedId(ann.id);
-                              setIsDragging(true);
-                              const rect = canvasRef.current?.getBoundingClientRect();
-                              if (rect) {
-                                const mouseX = (e.clientX - rect.left) / editor.zoom;
-                                const mouseY = (e.clientY - rect.top) / editor.zoom;
-                                dragOffset.current = { x: mouseX - ann.x, y: mouseY - ann.y };
-                              }
-                            }}
-                          >
-                            <Move size={12} />
-                          </div>
-                          
-                          {/* Resize Handle (Bottom-Right) */}
-                          {ann.type !== 'arrow' && (
-                            <div 
-                              className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-nwse-resize z-30 shadow-sm hover:scale-125 transition-transform" 
-                              onMouseDown={(e) => handleResizeStart(e, ann.id, 'se')}
-                            />
+                        <div className="pointer-events-auto absolute inset-0">
+                          {/* All 8 Resize Handles - extended hit areas */}
+                          {(ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill' || ann.type === 'text' || ann.type === 'blur') && (
+                            <>
+                              {/* Corners - larger hit areas */}
+                              <div className="absolute w-6 h-6 -top-3 -left-3 cursor-nwse-resize z-30" onMouseDown={(e) => handleResizeStart(e, ann.id, 'nw')} />
+                              <div className="absolute w-6 h-6 -top-3 -right-3 cursor-nesw-resize z-30" onMouseDown={(e) => handleResizeStart(e, ann.id, 'ne')} />
+                              <div className="absolute w-6 h-6 -bottom-3 -left-2 cursor-nesw-resize z-30" onMouseDown={(e) => handleResizeStart(e, ann.id, 'sw')} />
+                              <div className="absolute w-6 h-6 -bottom-3 -right-3 cursor-nwse-resize z-30" onMouseDown={(e) => handleResizeStart(e, ann.id, 'se')} />
+                              {/* Edge hit areas - full strips */}
+                              <div className="absolute w-full h-3 top-0 cursor-ns-resize z-20" onMouseDown={(e) => handleResizeStart(e, ann.id, 'n')} />
+                              <div className="absolute w-full h-3 bottom-0 cursor-ns-resize z-20" onMouseDown={(e) => handleResizeStart(e, ann.id, 's')} />
+                              <div className="absolute h-full w-3 left-0 cursor-ew-resize z-20" onMouseDown={(e) => handleResizeStart(e, ann.id, 'w')} />
+                              <div className="absolute h-full w-3 right-0 cursor-ew-resize z-20" onMouseDown={(e) => handleResizeStart(e, ann.id, 'e')} />
+                            </>
                           )}
-
                           {/* Arrow Adjustment Handles */}
-                          {ann.type === 'arrow' && (
+                          {(ann.type === 'arrow' || ann.type === 'line') && (
                             <>
                               <div 
                                 className="absolute w-3.5 h-3.5 bg-white border-2 border-blue-600 rounded-full cursor-pointer z-40 shadow-sm hover:scale-125 transition-transform" 
@@ -927,18 +1185,67 @@ function App() {
                           style={{ 
                             color: ann.color, 
                             fontSize: ann.fontSize, 
-                            fontWeight: ann.fontWeight, 
+                            fontWeight: ann.fontWeight,
+                            fontStyle: ann.fontStyle,
+                            backgroundColor: ann.textBackgroundColor === 'transparent' ? 'transparent' : (ann.textBackgroundColor || 'transparent'),
+                            padding: ann.textBackgroundColor && ann.textBackgroundColor !== 'transparent' ? '4px 6px' : '2px',
+                            borderRadius: ann.textBackgroundColor && ann.textBackgroundColor !== 'transparent' ? '4px' : '0',
                             width: ann.width && ann.width > 20 ? ann.width : 'auto',
                             minHeight: ann.height && ann.height > 20 ? ann.height : 'auto',
                             textShadow: isDark ? '0 2px 8px rgba(0,0,0,0.8)' : '0 1px 4px rgba(0,0,0,0.2), 0 0 2px white' 
                           }} 
-                          className="whitespace-pre-wrap font-sans leading-tight p-2 outline-none"
+                          className="whitespace-pre-wrap font-sans leading-tight p-2 outline-none contenteditable-root"
                         >
                           {ann.text}
                         </div>
                       )}
                       {ann.type === 'rect' && (
                         <div style={{ width: '100%', height: '100%' }}></div>
+                      )}
+                      {ann.type === 'circle' && (
+                        <div style={{ width: '100%', height: '100%' }}></div>
+                      )}
+                      {ann.type === 'highlighter' && (
+                        <div style={{ width: '100%', height: '100%' }}></div>
+                      )}
+                      {ann.type === 'line' && (
+                        <svg 
+                          className="absolute inset-0 w-full h-full overflow-visible pointer-events-none"
+                        >
+                          <defs>
+                            <marker id={`lineStart-${ann.id}`} markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                              <circle cx="3" cy="3" r="2.5" fill={ann.color} />
+                            </marker>
+                            <marker id={`lineEnd-${ann.id}`} markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+                              <circle cx="3" cy="3" r="2.5" fill={ann.color} />
+                            </marker>
+                          </defs>
+                          <line 
+                            x1={ann.x} y1={ann.y} x2={ann.x2} y2={ann.y2} 
+                            stroke="transparent" 
+                            strokeWidth="24" 
+                            className="pointer-events-auto cursor-move"
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              setSelectedId(ann.id);
+                              setIsDragging(true);
+                              const rect = canvasRef.current?.getBoundingClientRect();
+                              if (rect) {
+                                const mouseX = (e.clientX - rect.left) / editor.zoom;
+                                const mouseY = (e.clientY - rect.top) / editor.zoom;
+                                dragOffset.current = { x: mouseX - ann.x, y: mouseY - ann.y };
+                              }
+                            }}
+                          />
+                          <line 
+                            x1={ann.x} y1={ann.y} x2={ann.x2} y2={ann.y2} 
+                            stroke={ann.color} 
+                            strokeWidth={ann.strokeWidth || 2}
+                            markerStart={`url(#lineStart-${ann.id})`}
+                            markerEnd={`url(#lineEnd-${ann.id})`}
+                            className="pointer-events-none"
+                          />
+                        </svg>
                       )}
                       {ann.type === 'arrow' && (
                         <svg 
@@ -970,7 +1277,7 @@ function App() {
                           <line 
                             x1={ann.x} y1={ann.y} x2={ann.x2} y2={ann.y2} 
                             stroke={ann.color} 
-                            strokeWidth="3" 
+                            strokeWidth={ann.strokeWidth || 3} 
                             markerEnd={`url(#arrowhead-${ann.id})`}
                             className="pointer-events-none"
                           />
@@ -985,12 +1292,16 @@ function App() {
         </main>
 
         {/* Toolbar (Right Sidebar) */}
-        <aside className={`w-16 border-l flex flex-col items-center py-4 gap-4 shrink-0 transition-colors ${isDark ? 'bg-[#16161a] border-white/5' : 'bg-white border-gray-100'}`}>
+        <aside className={`w-16 border-l flex flex-col items-center py-4 gap-1 shrink-0 transition-colors ${isDark ? 'bg-[#16161a] border-white/5' : 'bg-white border-gray-100'}`}>
            <ToolButton icon={<MousePointer size={20}/>} active={editor.activeTool === 'select'} onClick={() => setEditor({...editor, activeTool: 'select'})} label="Select" isDark={isDark} />
-           <ToolButton icon={<Type size={20}/>} active={editor.activeTool === 'text'} onClick={() => setEditor({...editor, activeTool: 'text'})} label="Text" isDark={isDark} />
-           <ToolButton icon={<Square size={20}/>} active={editor.activeTool === 'rect'} onClick={() => setEditor({...editor, activeTool: 'rect'})} label="Box" isDark={isDark} />
-           <ToolButton icon={<ArrowUpRight size={20}/>} active={editor.activeTool === 'arrow'} onClick={() => setEditor({...editor, activeTool: 'arrow'})} label="Arrow" isDark={isDark} />
-           <ToolButton icon={<EyeOff size={20}/>} active={editor.activeTool === 'blur'} onClick={() => setEditor({...editor, activeTool: 'blur'})} label="Blur" isDark={isDark} />
+<ToolButton icon={<Type size={20}/>} active={editor.activeTool === 'text'} onClick={() => setEditor({...editor, activeTool: 'text'})} label="Text" isDark={isDark} />
+            <ToolButton icon={<Square size={20}/>} active={editor.activeTool === 'rect'} onClick={() => setEditor({...editor, activeTool: 'rect'})} label="Box" isDark={isDark} />
+            <ToolButton icon={<Circle size={20}/>} active={editor.activeTool === 'circle'} onClick={() => setEditor({...editor, activeTool: 'circle'})} label="Circle" isDark={isDark} />
+            <ToolButton icon={<PaintBucket size={20}/>} active={editor.activeTool === 'fill'} onClick={() => setEditor({...editor, activeTool: 'fill'})} label="Fill" isDark={isDark} />
+            <ToolButton icon={<ArrowUpRight size={20}/>} active={editor.activeTool === 'arrow'} onClick={() => setEditor({...editor, activeTool: 'arrow'})} label="Arrow" isDark={isDark} />
+            <ToolButton icon={<MinusIcon size={20}/>} active={editor.activeTool === 'line'} onClick={() => setEditor({...editor, activeTool: 'line'})} label="Line" isDark={isDark} />
+            <ToolButton icon={<Highlighter size={20}/>} active={editor.activeTool === 'highlighter'} onClick={() => setEditor({...editor, activeTool: 'highlighter'})} label="Highlight" isDark={isDark} />
+            <ToolButton icon={<EyeOff size={20}/>} active={editor.activeTool === 'blur'} onClick={() => setEditor({...editor, activeTool: 'blur'})} label="Blur" isDark={isDark} />
         </aside>
       </div>
     </div>
