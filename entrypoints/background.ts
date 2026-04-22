@@ -1,4 +1,30 @@
 export default defineBackground(() => {
+  let captureState = {
+    isCapturing: false,
+    capturingTabId: 0,
+    shouldCancel: false,
+    progress: { current: 0, total: 0 },
+  };
+
+  function sendProgressUpdate(current: number, total: number) {
+    captureState.progress = { current, total };
+    if (captureState.capturingTabId) {
+      browser.tabs.sendMessage(captureState.capturingTabId, {
+        type: 'CAPTURE_PROGRESS',
+        current,
+        total,
+      }).catch(() => {});
+    }
+  }
+
+  function notifyCaptureStatus() {
+    return {
+      inProgress: captureState.isCapturing,
+      tabId: captureState.capturingTabId,
+      progress: captureState.isCapturing ? captureState.progress : undefined,
+    };
+  }
+
   // Handle extension install
   browser.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
@@ -39,7 +65,7 @@ export default defineBackground(() => {
         target: { tabId },
         files: ['/content-scripts/content.js'],
       });
-      
+
       // Wait up to 500ms for the script to initialize (poll every 50ms)
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 50));
@@ -71,11 +97,22 @@ export default defineBackground(() => {
       handleAreaCapture().then(() => sendResponse({}));
       return true;
     }
-    
+
     if (message.type === 'OPEN_DASHBOARD') {
-       browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
-       sendResponse({});
-       return true;
+      browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') });
+      sendResponse({});
+      return true;
+    }
+
+    if (message.type === 'GET_CAPTURE_STATUS') {
+      sendResponse(notifyCaptureStatus());
+      return true;
+    }
+
+    if (message.type === 'CANCEL_CAPTURE') {
+      captureState.shouldCancel = true;
+      sendResponse({ canceled: true });
+      return true;
     }
   });
 
@@ -151,33 +188,49 @@ export default defineBackground(() => {
       return;
     }
 
-    // Ensure content script is loaded before messaging
-    const scriptReady = await ensureContentScript(tab.id);
-    if (!scriptReady) {
-      console.warn('Content script could not be injected into tab', tab.id);
-      return;
-    }
+    captureState.isCapturing = true;
+    captureState.capturingTabId = tab.id;
+    captureState.shouldCancel = false;
+    captureState.progress = { current: 0, total: 0 };
+
+    const cleanup = async () => {
+      captureState.isCapturing = false;
+      captureState.capturingTabId = 0;
+      captureState.shouldCancel = false;
+      captureState.progress = { current: 0, total: 0 };
+      if (tab.id) {
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'RESTORE_FIXED_ELEMENTS' });
+        } catch {}
+      }
+    };
 
     try {
       const storage: any = await browser.storage.local.get('maxCaptureHeight');
       const MAX_HEIGHT = Number(storage.maxCaptureHeight || 15000);
 
-      // 1. Prepare page (scroll bottom/top) and get dims
       const dims = await browser.tabs.sendMessage(tab.id, { type: 'PREPARE_FULL_PAGE' });
       if (!dims) return;
 
       const viewport = await browser.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' });
-      
+
       const fullWidth = dims.width;
       const fullHeight = dims.height;
       const viewHeight = viewport.height;
       const dpr = dims.dpr;
-      
+
       const fragments: { dataUrl: string, x: number, y: number }[] = [];
       let hasHiddenElements = false;
 
-      // 2. Capture in chunks by scrolling
+      const totalSteps = Math.ceil(Math.min(fullHeight, MAX_HEIGHT) / viewHeight);
+
       for (let y = 0; y < Math.min(fullHeight, MAX_HEIGHT); y += viewHeight) {
+        if (captureState.shouldCancel) {
+          console.log('Full-page capture canceled by user');
+          await cleanup();
+          return;
+        }
+
         if (y > 0 && !hasHiddenElements) {
             await browser.tabs.sendMessage(tab.id, { type: 'HIDE_FIXED_ELEMENTS' }).catch(() => {});
             hasHiddenElements = true;
@@ -185,12 +238,11 @@ export default defineBackground(() => {
         }
 
         await browser.tabs.sendMessage(tab.id, { type: 'SCROLL_TO', data: { x: 0, y: y } });
-        
-        // Wait for scroll to settle and respect MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND (max 2/sec)
+
         await new Promise(r => setTimeout(r, 600));
 
         const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
-        
+
         const scrollPos = await browser.tabs.sendMessage(tab.id, { type: 'GET_SCROLL_POS' });
 
         fragments.push({
@@ -199,15 +251,14 @@ export default defineBackground(() => {
           y: scrollPos.y * dpr,
         });
 
-        // If we hit the absolute bottom, break to avoid duplicate captures if y was overshot
+        sendProgressUpdate(fragments.length, totalSteps);
+
         if (scrollPos.y + viewHeight >= fullHeight || y >= fullHeight) {
             break;
         }
       }
 
-      if (hasHiddenElements) {
-          await browser.tabs.sendMessage(tab.id, { type: 'RESTORE_FIXED_ELEMENTS' }).catch(() => {});
-      }
+      await cleanup();
 
       if (fragments.length > 0) {
         const capture = {
@@ -225,6 +276,7 @@ export default defineBackground(() => {
       }
     } catch (err: any) {
       console.error('Scroll capture failed', err);
+      await cleanup();
       browser.tabs.sendMessage(tab.id, {
         type: 'SHOW_ALERT',
         data: { message: 'Screencrafter Error: ' + (err.message || String(err)) }
@@ -242,7 +294,6 @@ export default defineBackground(() => {
       return;
     }
 
-    // Ensure content script is loaded before messaging
     const scriptReady = await ensureContentScript(tab.id);
     if (!scriptReady) {
       console.warn('Content script could not be injected into tab', tab.id);
@@ -250,47 +301,176 @@ export default defineBackground(() => {
     }
 
     try {
-      // Capture the screen IMMEDIATELY while it's clean (no overlay, no popup)
-      const dataUrl = await browser.tabs.captureVisibleTab(undefined as any, { format: 'png' });
-      
       const result = await browser.tabs.sendMessage(tab.id, { type: 'START_AREA_SELECTION' });
       if (!result || !result.area) return;
-      
-      const { area, dpr } = result;
-      
-      const croppedDataUrl = await cropImage(dataUrl, area, dpr);
-      if (croppedDataUrl) {
-        let downloadUrl = croppedDataUrl;
-        
-        // Firefox and some Chrome versions prefer Blob URLs for large downloads
-        if (croppedDataUrl.startsWith('data:')) {
-          try {
-            const [header, base64] = croppedDataUrl.split(',');
-            const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
-            const binary = atob(base64);
-            const array = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-            const blob = new Blob([array], { type: mime });
-            downloadUrl = URL.createObjectURL(blob);
-          } catch (e) {
-            console.error('Blob URL conversion failed', e);
+
+      const { area, dpr, finalScrollX, finalScrollY, action } = result;
+      const doDownload = !action || action === 'download';
+      const doOpenEditor = action === 'edit';
+
+      const viewport = await browser.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' });
+      const viewHeight = viewport?.height || 768;
+
+      const selectionFitsInViewport = area.height <= viewHeight;
+
+      if (selectionFitsInViewport) {
+        await browser.tabs.sendMessage(tab.id, { type: 'HIDE_TOOLBAR' }).catch(() => {});
+        const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
+        if (!dataUrl) return;
+
+        const cropArea = {
+          x: area.x * dpr,
+          y: area.y * dpr,
+          width: area.width * dpr,
+          height: area.height * dpr,
+        };
+
+        const croppedDataUrl = await cropImage(dataUrl, cropArea, 1);
+        if (croppedDataUrl) {
+          if (doOpenEditor) {
+            await saveCaptureForEditor(croppedDataUrl, area, dpr, tab);
+          } else {
+            downloadImage(croppedDataUrl);
           }
         }
+      } else {
+        const selectionFragments: { dataUrl: string; pageY: number }[] = [];
+        const scrollYStart = Math.floor(area.y);
+        const scrollYEnd = Math.ceil(area.y + area.height);
+        const canvasHeight = Math.ceil((scrollYEnd - scrollYStart) * dpr);
+        const viewportWidth = Math.ceil(area.width * dpr);
+        const canvasWidth = Math.ceil(viewportWidth + Math.abs(area.x) * dpr);
 
-        browser.downloads.download({ 
-          url: downloadUrl, 
-          filename: `screencrafter-crop-${Date.now()}.png` 
-        });
+        await browser.tabs.sendMessage(tab.id, { type: 'HIDE_TOOLBAR' }).catch(() => {});
+
+        for (let y = scrollYStart; y < scrollYEnd; y += viewHeight) {
+          await browser.tabs.sendMessage(tab.id, { type: 'SCROLL_TO', data: { x: 0, y: y } });
+          await new Promise(r => setTimeout(r, 600));
+
+          const dataUrl = await browser.tabs.captureVisibleTab({ format: 'png' });
+          if (!dataUrl) continue;
+
+          const scrollPos = await browser.tabs.sendMessage(tab.id, { type: 'GET_SCROLL_POS' });
+          selectionFragments.push({
+            dataUrl,
+            pageY: scrollPos.y,
+          });
+
+          if (scrollPos.y + viewHeight >= scrollYEnd) break;
+        }
+
+        await browser.tabs.sendMessage(tab.id, { type: 'SCROLL_TO', data: { x: finalScrollX || 0, y: finalScrollY || 0 } });
+        await new Promise(r => setTimeout(r, 300));
+
+        if (selectionFragments.length > 0) {
+          const stitchedDataUrl = await stitchFragmentsWithOffset(selectionFragments, canvasWidth, canvasHeight, dpr, area.x);
+          if (stitchedDataUrl) {
+            const selectionAreaInStitched = {
+              x: Math.abs(Math.min(0, area.x)) * dpr,
+              y: 0,
+              width: area.width * dpr,
+              height: area.height * dpr,
+            };
+
+            const croppedDataUrl = await cropImage(stitchedDataUrl, selectionAreaInStitched, 1);
+            if (croppedDataUrl) {
+              if (doOpenEditor) {
+                await saveCaptureForEditor(croppedDataUrl, area, dpr, tab);
+              } else {
+                downloadImage(croppedDataUrl);
+              }
+            }
+          }
+        }
       }
     } catch (err) {
-      console.error('Area capture failed', err);
+      console.error('Area capture failed:', err);
     }
+  }
+
+  async function saveCaptureForEditor(imageDataUrl: string, area: any, dpr: number, tab: any) {
+    const capture = {
+      id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      image: imageDataUrl,
+      url: sanitizeUrl(tab.url),
+      title: tab.title || '',
+      timestamp: Date.now(),
+      type: 'area-select',
+    };
+    await browser.storage.local.set({ lastCapture: capture });
+    await browser.storage.local.set({ annotations: [] });
+    await browser.storage.local.set({ editorSettings: null });
+    const editorUrl = browser.runtime.getURL('/editor.html');
+    await browser.tabs.create({ url: editorUrl });
+  }
+
+  async function stitchFragmentsWithOffset(
+    fragments: { dataUrl: string; pageY: number }[],
+    canvasWidth: number,
+    canvasHeight: number,
+    dpr: number,
+    selectionX: number
+  ): Promise<string> {
+    if (fragments.length === 0) return '';
+
+    try {
+      const canvas = new OffscreenCanvas(canvasWidth, canvasHeight);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+
+      const firstImg = await loadImage(fragments[0].dataUrl);
+      const baseOffsetX = Math.abs(Math.min(0, selectionX)) * dpr;
+
+      for (const fragment of fragments) {
+        const img = await loadImage(fragment.dataUrl);
+        const offsetY = (fragment.pageY * dpr) - (fragments[0].pageY * dpr);
+        ctx.drawImage(img, baseOffsetX, offsetY, img.width, img.height);
+      }
+
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.error('Stitch fragments with offset failed', e);
+      return '';
+    }
+  }
+
+  async function loadImage(dataUrl: string): Promise<ImageBitmap> {
+    const [header, base64] = dataUrl.split(',');
+    const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+    const binary = atob(base64);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+    const blob = new Blob([array], { type: mime });
+    return createImageBitmap(blob);
+  }
+
+  function downloadImage(dataUrl: string) {
+    let downloadUrl = dataUrl;
+    if (dataUrl.startsWith('data:')) {
+      try {
+        const [header, base64] = dataUrl.split(',');
+        const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+        const binary = atob(base64);
+        const array = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+        const blob = new Blob([array], { type: mime });
+        downloadUrl = URL.createObjectURL(blob);
+      } catch (e) {
+        console.error('Blob URL conversion failed', e);
+      }
+    }
+    browser.downloads.download({ url: downloadUrl, filename: `screencrafter-crop-${Date.now()}.png` });
   }
 
   async function cropImage(dataUrl: string, area: any, dpr: number): Promise<string> {
     try {
       let img: HTMLImageElement | ImageBitmap;
-      
+
       // MV2 (Firefox) / Background Page support
       if (typeof Image !== 'undefined') {
         img = new Image();
