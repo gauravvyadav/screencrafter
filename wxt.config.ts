@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    version: '0.1.0',
+    version: '0.2.0',
     permissions: ['activeTab', 'tabs', 'storage', 'unlimitedStorage', 'downloads', 'scripting'],
     name: 'Screencrafter - Full Page Screenshot Tool',
     description: 'Capture, annotate, and save full page screenshots with ease.',

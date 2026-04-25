@@ -5,7 +5,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Logo } from '@/components/Logo';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 const RESTRICTED_PREFIXES = [
   'chrome://', 'chrome-extension://', 'edge://', 'about:',
