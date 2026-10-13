@@ -1,5 +1,7 @@
 export default defineContentScript({
-  matches: ['<all_urls>'],
+  registration: 'runtime',
+  allFrames: false,
+  runAt: 'document_idle',
   main() {
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const isFromExtension = sender.id === browser.runtime.id;
@@ -50,7 +52,7 @@ export default defineContentScript({
         return true;
       }
       if (message.type === 'HIDE_TOOLBAR') {
-        hideToolbar();
+        document.getElementById('sf-toolbar')?.style.setProperty('display', 'none', 'important');
         sendResponse(true);
         return true;
       }
@@ -288,13 +290,22 @@ container.appendChild(toolbar);
         overlay.style.display = 'block';
       }
 
+      function teardown() {
+        stopScroll();
+        window.removeEventListener('mousemove', onMouseMove, true);
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('mouseup', onMouseUp, true);
+        window.removeEventListener('keydown', onKeyDown, true);
+        overlay.remove();
+        selection.remove();
+        handles.forEach(h => h.remove());
+        toolbar.remove();
+      }
+
       function doDownload() {
         const scrollData = { ...bounds };
         bounds = { x: 0, y: 0, width: 0, height: 0 };
-        hideOverlay();
-        hideHandles();
-        hideToolbar();
-        selection.style.display = 'none';
+        teardown();
         callback({
           area: scrollData,
           dpr: window.devicePixelRatio,
@@ -307,10 +318,7 @@ container.appendChild(toolbar);
       function doEdit() {
         const scrollData = { ...bounds };
         bounds = { x: 0, y: 0, width: 0, height: 0 };
-        hideOverlay();
-        hideHandles();
-        hideToolbar();
-        selection.style.display = 'none';
+        teardown();
         callback({
           area: scrollData,
           dpr: window.devicePixelRatio,
@@ -321,13 +329,7 @@ container.appendChild(toolbar);
       }
 
       function doCancel() {
-        selection.style.display = 'none';
-        hideHandles();
-        hideToolbar();
-        overlay.remove();
-        selection.remove();
-        handles.forEach(h => h.remove());
-        toolbar.remove();
+        teardown();
         callback(null);
       }
 
@@ -345,7 +347,6 @@ container.appendChild(toolbar);
             clamp(window.scrollY + scrollDirY * SCROLL_SPEED, 0, maxY)
           );
           updateSelection();
-          updateStartMarker();
         }, 30);
       }
 
@@ -366,8 +367,8 @@ container.appendChild(toolbar);
       overlay.addEventListener('mousedown', (e: MouseEvent) => {
         if (e.button !== 0) return;
         e.stopPropagation();
-        const mx = e.clientX - window.scrollX;
-        const my = e.clientY - window.scrollY;
+        const mx = getPageX(e.clientX);
+        const my = getPageY(e.clientY);
         const inSel = bounds.width > 5 &&
                      mx >= bounds.x && mx <= bounds.x + bounds.width &&
                      my >= bounds.y && my <= bounds.y + bounds.height;
@@ -427,7 +428,7 @@ container.appendChild(toolbar);
         }, true);
       }
 
-      window.addEventListener('mousemove', (e: MouseEvent) => {
+      function onMouseMove(e: MouseEvent) {
         if (isDrawing) {
           const ex = getPageX(e.clientX);
           const ey = getPageY(e.clientY);
@@ -459,8 +460,8 @@ container.appendChild(toolbar);
           toolbarOffsetY = e.clientY - toolbarDragStartY;
           updateSelection();
         } else {
-          const mx = e.clientX - window.scrollX;
-          const my = e.clientY - window.scrollY;
+          const mx = getPageX(e.clientX);
+          const my = getPageY(e.clientY);
           const inSel = mx >= bounds.x && mx <= bounds.x + bounds.width &&
                      my >= bounds.y && my <= bounds.y + bounds.height;
           if (inSel && bounds.width > 5) {
@@ -471,14 +472,13 @@ container.appendChild(toolbar);
             selection.style.cursor = 'default';
           }
         }
-      }, true);
+      }
 
-      window.addEventListener('scroll', () => {
+      function onScroll() {
         updateSelection();
-        updateStartMarker();
-      }, { passive: true });
+      }
 
-      window.addEventListener('mouseup', (e: MouseEvent) => {
+      function onMouseUp(e: MouseEvent) {
         stopScroll();
         if (isDrawing) {
           isDrawing = false;
@@ -496,9 +496,9 @@ container.appendChild(toolbar);
         isMovingSelection = false;
         toolbarDragging = false;
         if (grip) grip.style.cursor = 'grab';
-      }, true);
+      }
 
-      window.addEventListener('keydown', (e: KeyboardEvent) => {
+      function onKeyDown(e: KeyboardEvent) {
         if (e.key === 'Escape') {
           e.preventDefault();
           stopScroll();
@@ -506,19 +506,14 @@ container.appendChild(toolbar);
         } else if (e.key === 'Enter') {
           e.preventDefault();
           stopScroll();
-          doCapture();
+          if (bounds.width > 5 && bounds.height > 5) doDownload();
         }
-      }, true);
+      }
 
-selection.addEventListener('mousedown', (e: MouseEvent) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        e.preventDefault();
-        isMovingSelection = true;
-        dragStartMouseX = e.clientX;
-        dragStartMouseY = e.clientY;
-        dragStartBounds = { ...bounds };
-      }, true);
+      window.addEventListener('mousemove', onMouseMove, true);
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('mouseup', onMouseUp, true);
+      window.addEventListener('keydown', onKeyDown, true);
     }
   },
 });

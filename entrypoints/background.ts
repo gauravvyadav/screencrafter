@@ -131,18 +131,30 @@ export default defineBackground(() => {
   }
 
   async function handleCaptureVisible() {
+    if (captureState.isCapturing) return;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
-    const dataUrl = await browser.tabs.captureVisibleTab();
-    const capture = {
-      id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      image: dataUrl,
-      url: sanitizeUrl(tab.url),
-      title: tab.title || '',
-      timestamp: Date.now(),
-    };
-    await saveCapture(capture);
-    browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
+    if (!isCapturableTab(tab.url)) {
+      console.warn('Cannot capture this page:', tab.url);
+      notifyRestricted();
+      return;
+    }
+    try {
+      const dataUrl = await browser.tabs.captureVisibleTab();
+      if (!dataUrl) return;
+      const capture = {
+        id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        image: dataUrl,
+        url: sanitizeUrl(tab.url),
+        title: tab.title || '',
+        timestamp: Date.now(),
+        type: 'visible',
+      };
+      await saveCapture(capture);
+      browser.tabs.create({ url: browser.runtime.getURL('/editor.html') });
+    } catch (err) {
+      console.error('Visible capture failed', err);
+    }
   }
 
   /** Checks if a tab URL is capturable (not a restricted browser page). */
@@ -178,12 +190,22 @@ export default defineBackground(() => {
   }
 
   // --- SCROLL-BASED FULL PAGE CAPTURE ---
+  // Only runs after explicit user action. Content script is injected on-demand
+  // (no <all_urls> auto-injection) so idle tabs never trigger capture warnings.
   async function handleFullPageCaptureScroll() {
+    if (captureState.isCapturing) return;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
     if (!isCapturableTab(tab.url)) {
       console.warn('Cannot capture this page:', tab.url);
+      notifyRestricted();
+      return;
+    }
+
+    const scriptReady = await ensureContentScript(tab.id);
+    if (!scriptReady) {
+      console.warn('Content script could not be injected into tab', tab.id);
       notifyRestricted();
       return;
     }
@@ -210,7 +232,10 @@ export default defineBackground(() => {
       const MAX_HEIGHT = Number(storage.maxCaptureHeight || 15000);
 
       const dims = await browser.tabs.sendMessage(tab.id, { type: 'PREPARE_FULL_PAGE' });
-      if (!dims) return;
+      if (!dims) {
+        await cleanup();
+        return;
+      }
 
       const viewport = await browser.tabs.sendMessage(tab.id, { type: 'GET_VIEWPORT' });
 
@@ -285,6 +310,7 @@ export default defineBackground(() => {
   }
 
   async function handleAreaCapture() {
+    if (captureState.isCapturing) return;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
 
@@ -418,12 +444,14 @@ export default defineBackground(() => {
       const ctx = canvas.getContext('2d');
       if (!ctx) return '';
 
-      const firstImg = await loadImage(fragments[0].dataUrl);
+      const first = fragments[0];
+      if (!first) return '';
+      const firstImg = await loadImage(first.dataUrl);
       const baseOffsetX = Math.abs(Math.min(0, selectionX)) * dpr;
 
       for (const fragment of fragments) {
         const img = await loadImage(fragment.dataUrl);
-        const offsetY = (fragment.pageY * dpr) - (fragments[0].pageY * dpr);
+        const offsetY = (fragment.pageY * dpr) - (first.pageY * dpr);
         ctx.drawImage(img, baseOffsetX, offsetY, img.width, img.height);
       }
 
@@ -440,7 +468,9 @@ export default defineBackground(() => {
   }
 
   async function loadImage(dataUrl: string): Promise<ImageBitmap> {
-    const [header, base64] = dataUrl.split(',');
+    const parts = dataUrl.split(',');
+    const header = parts[0] ?? '';
+    const base64 = parts[1] ?? '';
     const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
     const binary = atob(base64);
     const array = new Uint8Array(binary.length);
@@ -453,7 +483,9 @@ export default defineBackground(() => {
     let downloadUrl = dataUrl;
     if (dataUrl.startsWith('data:')) {
       try {
-        const [header, base64] = dataUrl.split(',');
+        const parts = dataUrl.split(',');
+        const header = parts[0] ?? '';
+        const base64 = parts[1] ?? '';
         const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
         const binary = atob(base64);
         const array = new Uint8Array(binary.length);
@@ -481,7 +513,9 @@ export default defineBackground(() => {
         });
       } else {
       // MV3 (Chrome) / Service Worker support
-      const [header, base64] = dataUrl.split(',');
+      const parts = dataUrl.split(',');
+      const header = parts[0] ?? '';
+      const base64 = parts[1] ?? '';
       const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
       const binary = atob(base64);
       const array = new Uint8Array(binary.length);

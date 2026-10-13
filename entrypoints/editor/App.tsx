@@ -3,8 +3,8 @@ import {
   Download, Type, Square, MousePointer, 
   Image as ImageIcon, ChevronLeft, LayoutGrid, ChevronDown, FileImage, FileText,
   Trash2, Plus, Minus, Undo2, Redo2, Pipette,
-  EyeOff, RefreshCcw, ArrowUpRight, Droplets, Circle, Minus as MinusIcon, Highlighter,
-  ArrowUp, ArrowDown, Upload, PaintBucket
+  EyeOff, ArrowUpRight, Droplets, Circle, Minus as MinusIcon, Highlighter,
+  ArrowUp, ArrowDown, Upload, PaintBucket, Hash, Maximize
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
@@ -13,7 +13,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 
 // --- Types ---
 
-type Tool = 'select' | 'text' | 'blur' | 'arrow' | 'rect' | 'circle' | 'line' | 'highlighter' | 'fill';
+type Tool = 'select' | 'text' | 'blur' | 'arrow' | 'rect' | 'circle' | 'line' | 'highlighter' | 'fill' | 'number';
 
 interface Annotation {
   id: string;
@@ -76,6 +76,12 @@ function App() {
   const [fileName, setFileName] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<'png' | 'jpeg' | 'webp' | 'pdf'>('png');
+  const [exportScale, setExportScale] = useState<1 | 2 | 3>(2);
+  const [isExporting, setIsExporting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const numberCounter = useRef(1);
+  const annotationsRef = useRef<Annotation[]>([]);
+  const zoomRef = useRef(0.8);
   
   const [editor, setEditor] = useState<EditorState>({
     padding: 0,
@@ -91,6 +97,7 @@ function App() {
 
   const exportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDrawing = useRef(false);
@@ -109,15 +116,27 @@ function App() {
           } else {
             setStitchedImage(res.lastCapture.image || null);
           }
-          // Set filename from page title
+          // Set filename from page title + date
           if (res.lastCapture.title) {
             const cleanTitle = res.lastCapture.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().replace(/-+/g, '-').replace(/^-|-$/g, '');
-            setFileName(`screencrafter-${cleanTitle}`);
+            const date = new Date(res.lastCapture.timestamp || Date.now()).toISOString().slice(0, 10);
+            setFileName(`screencrafter-${cleanTitle}-${date}`);
+          } else if (res.lastCapture.timestamp) {
+            const date = new Date(res.lastCapture.timestamp).toISOString().slice(0, 10);
+            setFileName(`screencrafter-capture-${date}`);
           }
         }
         
         // Restore annotations and settings
-        if (res.annotations) setAnnotations(res.annotations);
+        if (res.annotations) {
+          setAnnotations(res.annotations);
+          annotationsRef.current = res.annotations;
+          const nums = (res.annotations as Annotation[])
+            .filter(a => a.type === 'number')
+            .map(a => parseInt(a.text || '0', 10))
+            .filter(n => !isNaN(n));
+          if (nums.length > 0) numberCounter.current = Math.max(...nums) + 1;
+        }
         if (res.editorSettings) setEditor(res.editorSettings);
         if (res.captureHistory) setCaptureHistory(res.captureHistory);
       } finally {
@@ -128,10 +147,20 @@ function App() {
 
   // Save changes to storage
   useEffect(() => {
+    annotationsRef.current = annotations;
     if (!loading) {
       browser.storage.local.set({ annotations });
     }
   }, [annotations, loading]);
+
+  useEffect(() => {
+    zoomRef.current = editor.zoom;
+  }, [editor.zoom]);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 2600);
+  };
 
   useEffect(() => {
     if (!loading) {
@@ -155,12 +184,34 @@ function App() {
     }
   }, [data]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (tools, delete, escape). Skipped while typing.
+  // Note: Ctrl+E export shortcut is registered after handleExport is defined.
   useEffect(() => {
+    const isTyping = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable;
+    };
+    const toolKeys: Record<string, Tool> = {
+      v: 'select', t: 'text', r: 'rect', c: 'circle', f: 'fill',
+      a: 'arrow', l: 'line', h: 'highlighter', b: 'blur', n: 'number',
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isTyping(e)) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault();
         deleteAnnotation(selectedId);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setSelectedId(null);
+        setEditor(prev => ({ ...prev, activeTool: 'select' }));
+        return;
+      }
+      const tool = toolKeys[e.key.toLowerCase()];
+      if (tool && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        setEditor(prev => ({ ...prev, activeTool: tool }));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -175,8 +226,8 @@ function App() {
     });
     
     const canvas = document.createElement('canvas');
-    canvas.width = cap.viewportWidth || cap.fullWidth;
-    canvas.height = cap.fullHeight;
+    canvas.width = Math.round(cap.viewportWidth || cap.fullWidth || 1280);
+    canvas.height = Math.round(cap.fullHeight || 800);
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
     
@@ -187,13 +238,16 @@ function App() {
       
       if (typeof frag === 'string') {
         img.src = frag;
-        await new Promise(r => img.onload = r);
-        const yOffset = i * cap.viewportHeight;
-        const heightToDraw = Math.min(cap.viewportHeight, cap.fullHeight - yOffset);
-        ctx.drawImage(img, 0, 0, cap.viewportWidth, heightToDraw, 0, yOffset, cap.viewportWidth, heightToDraw);
+        await new Promise(r => { img.onload = r; img.onerror = r; });
+        const vw = cap.viewportWidth || canvas.width;
+        const vh = cap.viewportHeight || vw;
+        const yOffset = i * vh;
+        const heightToDraw = Math.min(vh, canvas.height - yOffset);
+        if (heightToDraw <= 0) continue;
+        ctx.drawImage(img, 0, 0, vw, heightToDraw, 0, yOffset, vw, heightToDraw);
       } else {
         img.src = frag.dataUrl;
-        await new Promise(r => img.onload = r);
+        await new Promise(r => { img.onload = r; img.onerror = r; });
         ctx.drawImage(img, frag.x || 0, frag.y || 0);
       }
     }
@@ -203,7 +257,7 @@ function App() {
   const [history, setHistory] = useState<Annotation[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
-  const saveToHistory = (newAnnotations: Annotation[]) => {
+  function saveToHistory(newAnnotations: Annotation[]) {
     // Only save if different from current history state to avoid duplicates
     const current = JSON.stringify(history[historyIndex]);
     const next = JSON.stringify(newAnnotations);
@@ -216,25 +270,25 @@ function App() {
     
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-  };
+  }
 
-  const undo = () => {
+  function undo() {
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
       setAnnotations(JSON.parse(JSON.stringify(history[prevIndex])));
       setSelectedId(null);
     }
-  };
+  }
 
-  const redo = () => {
+  function redo() {
     if (historyIndex < history.length - 1) {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
       setAnnotations(JSON.parse(JSON.stringify(history[nextIndex])));
       setSelectedId(null);
     }
-  };
+  }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -282,19 +336,22 @@ function App() {
     startPos.current = { x, y };
 
     const newId = Math.random().toString(36).substr(2, 9);
+    const isNumber = editor.activeTool === 'number';
+    const num = isNumber ? numberCounter.current : 0;
+    if (isNumber) numberCounter.current += 1;
     const newAnn: Annotation = {
       id: newId,
       type: editor.activeTool as Tool,
-      x,
-      y,
+      x: isNumber ? x - 18 : x,
+      y: isNumber ? y - 18 : y,
       x2: x,
       y2: y,
-      width: editor.activeTool === 'text' ? 100 : 0,
-      height: editor.activeTool === 'text' ? 32 : 0,
+      width: editor.activeTool === 'text' ? 100 : isNumber ? 36 : 0,
+      height: editor.activeTool === 'text' ? 32 : isNumber ? 36 : 0,
       color: editor.activeTool === 'fill' ? '#3b82f6' : '#3b82f6',
-      fontSize: 24,
+      fontSize: isNumber ? 16 : 24,
       fontWeight: 'normal',
-      text: editor.activeTool === 'text' ? '' : '',
+      text: editor.activeTool === 'text' ? '' : isNumber ? String(num) : '',
       strokePreset: 'medium',
       strokeWidth: 3,
       opacity: 1,
@@ -304,6 +361,14 @@ function App() {
 
     setAnnotations([...annotations, newAnn]);
     setSelectedId(newId);
+
+    // Number badges are placed instantly — return to select for fast placement
+    if (isNumber) {
+      isDrawing.current = false;
+      saveToHistory([...annotationsRef.current, newAnn]);
+      setEditor(prev => ({ ...prev, activeTool: 'select' }));
+      return;
+    }
     
     // Auto-focus text for immediate editing
     if (editor.activeTool === 'text') {
@@ -318,8 +383,26 @@ function App() {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    const currentX = (e.clientX - rect.left) / editor.zoom;
-    const currentY = (e.clientY - rect.top) / editor.zoom;
+    const rawX = (e.clientX - rect.left) / editor.zoom;
+    const rawY = (e.clientY - rect.top) / editor.zoom;
+    // Shift-snap for arrows/lines: lock to horizontal, vertical, or 45°
+    let currentX = rawX;
+    let currentY = rawY;
+    if (e.shiftKey && isDrawing.current && (editor.activeTool === 'arrow' || editor.activeTool === 'line')) {
+      const dx = rawX - startPos.current.x;
+      const dy = rawY - startPos.current.y;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      if (adx < ady * 0.4142) {
+        currentX = startPos.current.x; // vertical
+      } else if (ady < adx * 0.4142) {
+        currentY = startPos.current.y; // horizontal
+      } else {
+        const m = Math.min(adx, ady);
+        currentX = startPos.current.x + Math.sign(dx) * m;
+        currentY = startPos.current.y + Math.sign(dy) * m;
+      }
+    }
 
     if (resizingId) {
       setAnnotations(prev => prev.map(a => {
@@ -402,7 +485,7 @@ function App() {
 
   const handleMouseUp = () => {
     if (isDrawing.current || isDragging || resizingId) {
-      saveToHistory(annotations);
+      saveToHistory([...annotationsRef.current]);
     }
     isDrawing.current = false;
     setIsDragging(false);
@@ -418,36 +501,42 @@ function App() {
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
   };
 
-  const deleteAnnotation = (id: string) => {
-    const newAnns = annotations.filter(a => a.id !== id);
+  function deleteAnnotation(id: string) {
+    const newAnns = annotationsRef.current.filter(a => a.id !== id);
     setAnnotations(newAnns);
     saveToHistory(newAnns);
     setSelectedId(null);
-  };
+  }
 
   const handleExport = async (format: 'png' | 'jpeg' | 'webp' | 'pdf' = 'png') => {
-    if (!exportRef.current) return;
+    if (!exportRef.current || isExporting) return;
+    if (!stitchedImage) {
+      showToast('Nothing to export yet');
+      return;
+    }
     setExportMenuOpen(false);
-    const originalZoom = editor.zoom;
+    setIsExporting(true);
+    const originalZoom = zoomRef.current;
     const originalSelectedId = selectedId;
-    setSelectedId(null); 
+    setSelectedId(null);
     setEditor(prev => ({ ...prev, zoom: 1 }));
-    
+
     const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').split('.')[0];
     const finalName = fileName || (data?.title ? `screencrafter-${data.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().replace(/-+/g, '-').replace(/^-|-$/g, '')}` : `screencrafter-capture-${timestamp}`);
-    
+
     setTimeout(async () => {
       try {
-        const dataUrl = await toPng(exportRef.current!, { 
-          quality: 1.0, 
-          pixelRatio: 2,
+        const dataUrl = await toPng(exportRef.current!, {
+          quality: 1.0,
+          pixelRatio: exportScale,
           skipFonts: true
         });
 
         if (format === 'pdf') {
           const img = new Image();
           img.src = dataUrl;
-          await new Promise(r => img.onload = r);
+          await new Promise(r => { img.onload = r; img.onerror = r; });
+          if (!img.naturalWidth) throw new Error('Export render failed');
           const canvas = document.createElement('canvas');
           canvas.width = img.naturalWidth;
           canvas.height = img.naturalHeight;
@@ -461,23 +550,67 @@ function App() {
             const pdf = new jsPDF({ orientation: w > h ? 'landscape' : 'portrait', unit: 'mm', format: [w, h] });
             pdf.addImage(jpgDataUrl, 'JPEG', 0, 0, w, h, undefined, 'FAST');
             pdf.save(`${finalName}.pdf`);
+            showToast(`Saved ${finalName}.pdf`);
           }
         } else if (format === 'jpeg') {
           const link = document.createElement('a');
           link.download = `${finalName}.jpg`;
-          link.href = dataUrl.replace('image/png', 'image/jpeg').replace('data:image', 'data:image/jpeg');
+          link.href = dataUrl;
           link.click();
+          showToast(`Saved ${finalName}.jpg`);
         } else if (format === 'webp') {
           const link = document.createElement('a');
           link.download = `${finalName}.webp`;
-          link.href = dataUrl.replace('image/png', 'image/webp').replace('data:image', 'data:image/webp');
+          link.href = dataUrl;
           link.click();
+          showToast(`Saved ${finalName}.webp`);
         } else {
           const link = document.createElement('a');
           link.download = `${finalName}.png`;
           link.href = dataUrl;
           link.click();
+          showToast(`Saved ${finalName}.png`);
         }
+      } catch (err) {
+        console.error('Export failed:', err);
+        showToast('Export failed — image may be too large');
+      } finally {
+        setEditor(prev => ({ ...prev, zoom: originalZoom }));
+        setSelectedId(originalSelectedId);
+        setIsExporting(false);
+      }
+    }, 200);
+  };
+
+  const handleCopyToClipboard = async () => {
+    if (!exportRef.current || isExporting) return;
+    if (!stitchedImage) {
+      showToast('Nothing to copy yet');
+      return;
+    }
+    const originalZoom = zoomRef.current;
+    const originalSelectedId = selectedId;
+    setSelectedId(null);
+    setEditor(prev => ({ ...prev, zoom: 1 }));
+
+    setTimeout(async () => {
+      try {
+        const dataUrl = await toPng(exportRef.current!, {
+          quality: 1.0,
+          pixelRatio: exportScale,
+          skipFonts: true
+        });
+
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+        showToast('Copied to clipboard');
+      } catch (err) {
+        console.error('Failed to copy:', err);
+        showToast('Copy failed');
       } finally {
         setEditor(prev => ({ ...prev, zoom: originalZoom }));
         setSelectedId(originalSelectedId);
@@ -485,31 +618,32 @@ function App() {
     }, 200);
   };
 
-  const handleCopyToClipboard = async () => {
-    if (!exportRef.current) return;
-    setSelectedId(null);
-    setEditor(prev => ({ ...prev, zoom: 1 }));
-    
-    setTimeout(async () => {
-      try {
-        const dataUrl = await toPng(exportRef.current!, { 
-          quality: 1.0, 
-          pixelRatio: 2,
-          skipFonts: true
-        });
-        
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
-        
-        await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob })
-        ]);
-      } catch (err) {
-        console.error('Failed to copy:', err);
-      } finally {
-        setEditor(prev => ({ ...prev, zoom: editor.zoom }));
+  // Ctrl/Cmd+E export shortcut (registered here so handleExport exists)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        handleExport(exportFormat);
       }
-    }, 200);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [exportFormat, exportScale, isExporting, stitchedImage, fileName, data]);
+
+  const handleFitZoom = () => {
+    const workspace = workspaceRef.current;
+    const target = exportRef.current;
+    if (!workspace || !target) {
+      setEditor(prev => ({ ...prev, zoom: 1 }));
+      return;
+    }
+    const avail = workspace.clientWidth - 160;
+    const full = target.scrollWidth || target.offsetWidth || 800;
+    if (full <= 0) return;
+    const fit = avail / full;
+    setEditor(prev => ({ ...prev, zoom: Math.min(2, Math.max(0.1, Math.round(fit * 100) / 100)) }));
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -624,15 +758,15 @@ function App() {
             <div className={`w-px h-3 mx-1 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}></div>
             <button onClick={() => setEditor(prev => ({ ...prev, zoom: Math.min(2, prev.zoom + 0.1) }))} className="p-1 cursor-pointer opacity-60 hover:opacity-100 transition-opacity"><Plus size={14}/></button>
             <div className={`w-px h-3 mx-1 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}></div>
-            <button onClick={() => setEditor(prev => ({ ...prev, zoom: 1 }))} className="p-1 cursor-pointer opacity-60 hover:opacity-100 transition-opacity" title="Reset Zoom">
-              <RefreshCcw size={14} />
+            <button onClick={handleFitZoom} className="p-1 cursor-pointer opacity-60 hover:opacity-100 transition-opacity" title="Fit to screen">
+              <Maximize size={14} />
             </button>
           </div>
           <ThemeToggle theme={theme} toggleTheme={toggleTheme} isDark={isDark} size={18} />
           <div className="relative">
             <div className="flex">
-              <button onClick={() => handleExport(exportFormat)} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white pl-4 pr-3 py-1.5 rounded-l-lg text-sm font-bold shadow-lg active:scale-95 transition-all">
-                <Download size={16} /> Export {exportFormat.toUpperCase()}
+              <button onClick={() => handleExport(exportFormat)} disabled={isExporting || !stitchedImage} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white pl-4 pr-3 py-1.5 rounded-l-lg text-sm font-bold shadow-lg active:scale-95 transition-all">
+                <Download size={16} /> {isExporting ? 'Exporting…' : `Export ${exportFormat.toUpperCase()}`}
               </button>
               <button 
                 onClick={() => setExportMenuOpen(!exportMenuOpen)} 
@@ -645,6 +779,14 @@ function App() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setExportMenuOpen(false)} />
                 <div className={`absolute right-0 top-full mt-2 w-48 rounded-xl border shadow-2xl z-50 overflow-hidden ${isDark ? 'bg-[#1e1e24] border-white/10' : 'bg-white border-gray-200'}`}>
+                  <div className={`px-4 py-2.5 flex items-center justify-between border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                    <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>Quality</span>
+                    <div className="flex gap-1">
+                      {([1, 2, 3] as const).map(s => (
+                        <button key={s} onClick={() => setExportScale(s)} className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-bold transition-colors ${exportScale === s ? 'bg-blue-600 text-white' : isDark ? 'text-gray-400 hover:bg-white/10' : 'text-gray-500 hover:bg-gray-100'}`}>{s}x</button>
+                      ))}
+                    </div>
+                  </div>
                   <button onClick={() => { setExportFormat('png'); handleExport('png'); }} className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold transition-colors ${isDark ? 'hover:bg-white/5 text-gray-300' : 'hover:bg-gray-50 text-gray-700'}`}>
                     <FileImage size={15} className="text-blue-500" /> PNG Image
                   </button>
@@ -693,6 +835,8 @@ function App() {
                       {selectedAnn.type === 'highlighter' && <Highlighter size={20} />}
                       {selectedAnn.type === 'arrow' && <ArrowUpRight size={20} />}
                       {selectedAnn.type === 'blur' && <EyeOff size={20} />}
+                      {selectedAnn.type === 'number' && <Hash size={20} />}
+                      {selectedAnn.type === 'fill' && <PaintBucket size={20} />}
                     </div>
                     <div>
                       <div className="text-[10px] font-bold uppercase opacity-40">Active Selection</div>
@@ -760,6 +904,32 @@ function App() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  )}
+                  {/* Content for Number badges */}
+                  {selectedAnn.type === 'number' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs opacity-60 font-medium">Badge number</span>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => updateAnnotation(selectedAnn.id, { text: String(Math.max(1, (parseInt(selectedAnn.text || '1', 10) || 1) - 1)) })} className={`px-2.5 py-1.5 rounded-lg text-xs font-bold ${isDark ? 'bg-white/5 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>−</button>
+                          <span className="text-sm font-mono font-bold w-8 text-center">{selectedAnn.text}</span>
+                          <button onClick={() => updateAnnotation(selectedAnn.id, { text: String((parseInt(selectedAnn.text || '1', 10) || 1) + 1) })} className={`px-2.5 py-1.5 rounded-lg text-xs font-bold ${isDark ? 'bg-white/5 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>+</button>
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-xs opacity-60 font-medium mb-2 block">Badge color</span>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#000000', '#4b5563', '#22c55e'].map(c => (
+                            <button
+                              key={c}
+                              onClick={() => updateAnnotation(selectedAnn.id, { color: c })}
+                              className={`aspect-square rounded-full border-2 transition-all ${selectedAnn.color === c ? 'border-blue-500 scale-110 shadow-md' : 'border-transparent shadow-sm'}`}
+                              style={{ backgroundColor: c }}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   )}
                   {/* Content for Text */}
@@ -915,8 +1085,13 @@ function App() {
                           const idx = annotations.findIndex(a => a.id === selectedAnn.id);
                           if (idx < annotations.length - 1) {
                             const newAnns = [...annotations];
-                            [newAnns[idx], newAnns[idx + 1]] = [newAnns[idx + 1], newAnns[idx]];
-                            setAnnotations(newAnns);
+                            const a = newAnns[idx];
+                            const b = newAnns[idx + 1];
+                            if (a !== undefined && b !== undefined) {
+                              newAnns[idx] = b;
+                              newAnns[idx + 1] = a;
+                              setAnnotations(newAnns);
+                            }
                           }
                         }} 
                         className={`py-2.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
@@ -930,8 +1105,13 @@ function App() {
                           const idx = annotations.findIndex(a => a.id === selectedAnn.id);
                           if (idx > 0) {
                             const newAnns = [...annotations];
-                            [newAnns[idx], newAnns[idx - 1]] = [newAnns[idx - 1], newAnns[idx]];
-                            setAnnotations(newAnns);
+                            const a = newAnns[idx];
+                            const b = newAnns[idx - 1];
+                            if (a !== undefined && b !== undefined) {
+                              newAnns[idx] = b;
+                              newAnns[idx - 1] = a;
+                              setAnnotations(newAnns);
+                            }
                           }
                         }} 
                         className={`py-2.5 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
@@ -1027,7 +1207,7 @@ function App() {
                           key={cap.id} 
                           onClick={() => {
                             setData(cap);
-                            if (cap.type.startsWith('full-page') && cap.fragments) {
+                            if ((cap.type ?? '').startsWith('full-page') && cap.fragments) {
                               stitchFragments(cap).then(setStitchedImage);
                             } else {
                               setStitchedImage(cap.image || null);
@@ -1057,7 +1237,18 @@ function App() {
         </aside>
 
         {/* Workspace */}
-        <main onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} className={`flex-1 overflow-auto flex justify-center items-start p-20 relative group/canvas transition-colors ${isDark ? 'bg-[#09090b]' : 'bg-[#f8f9fa]'}`} style={checkerboardStyle}>
+        <main ref={workspaceRef} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} className={`flex-1 overflow-auto flex justify-center items-start p-20 relative group/canvas transition-colors ${isDark ? 'bg-[#09090b]' : 'bg-[#f8f9fa]'}`} style={checkerboardStyle}>
+          {!stitchedImage ? (
+            <div className={`mt-24 max-w-sm text-center rounded-2xl border p-8 ${isDark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-sm'}`}>
+              <ImageIcon size={28} className="mx-auto mb-3 opacity-40" />
+              <p className="text-sm font-bold mb-1">No capture loaded</p>
+              <p className="text-xs opacity-60 mb-4">Capture a page from the popup, upload an image, or pick a recent capture.</p>
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => fileInputRef.current?.click()} className="px-3.5 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold">Upload image</button>
+                <button onClick={() => browser.tabs.create({ url: browser.runtime.getURL('/dashboard.html') })} className={`px-3.5 py-2 rounded-lg text-xs font-bold border ${isDark ? 'border-white/10 hover:bg-white/5' : 'border-gray-200 hover:bg-gray-50'}`}>Open Gallery</button>
+              </div>
+            </div>
+          ) : (
           <div style={{ transform: `scale(${editor.zoom})`, transformOrigin: 'top center', transition: 'transform 0.2s ease-out' }}>
             <div ref={exportRef} className="relative shadow-2xl transition-all" style={{ padding: `${editor.padding}px`, background: editor.background }}>
               <div className="bg-white overflow-hidden shadow-2xl flex flex-col" style={{ borderRadius: `${editor.rounding}px` }}>
@@ -1119,11 +1310,11 @@ function App() {
                         position: 'absolute', 
                         left: (ann.type === 'arrow' || ann.type === 'line') ? 0 : ann.x, 
                         top: (ann.type === 'arrow' || ann.type === 'line') ? 0 : ann.y, 
-                        width: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill') ? ann.width : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
-                        height: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill') ? ann.height : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
-                        border: (selectedId === ann.id && ann.type !== 'arrow' && ann.type !== 'line') ? `2px solid ${ann.color || '#3b82f6'}` : ((ann.type === 'rect' || ann.type === 'circle') ? `2px solid ${ann.color}` : 'none'), 
-                        borderRadius: ann.type === 'circle' ? '50%' : ann.type === 'highlighter' ? '4px' : '0',
-                        backgroundColor: ann.highlighter ? 'rgba(255, 255, 0, 0.35)' : (ann.fill ? (ann.color || '#3b82f6') : (ann.type === 'blur' ? (ann.blurMode === 'color' ? (ann.color || '#000000') : 'transparent') : 'transparent')),
+                        width: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill' || ann.type === 'number') ? ann.width : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
+                        height: (ann.type === 'blur' || ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill' || ann.type === 'number') ? ann.height : (ann.type === 'arrow' || ann.type === 'line' ? '100%' : 'auto'), 
+                        border: (selectedId === ann.id && ann.type !== 'arrow' && ann.type !== 'line' && ann.type !== 'number') ? `2px solid ${ann.color || '#3b82f6'}` : ((ann.type === 'rect' || ann.type === 'circle') ? `2px solid ${ann.color}` : 'none'), 
+                        borderRadius: ann.type === 'circle' || ann.type === 'number' ? '50%' : ann.type === 'highlighter' ? '4px' : '0',
+                        backgroundColor: ann.type === 'number' ? (ann.color || '#3b82f6') : ann.highlighter ? 'rgba(255, 255, 0, 0.35)' : (ann.fill ? (ann.color || '#3b82f6') : (ann.type === 'blur' ? (ann.blurMode === 'color' ? (ann.color || '#000000') : 'transparent') : 'transparent')),
                         cursor: (ann.type === 'arrow' || ann.type === 'line') ? 'inherit' : 'move', 
                         zIndex: 10,
                         opacity: ann.opacity ?? 1,
@@ -1140,7 +1331,7 @@ function App() {
                       {selectedId === ann.id && (
                         <div className="pointer-events-auto absolute inset-0">
                           {/* All 8 Resize Handles - extended hit areas */}
-                          {(ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill' || ann.type === 'text' || ann.type === 'blur') && (
+                          {(ann.type === 'rect' || ann.type === 'circle' || ann.type === 'highlighter' || ann.type === 'fill' || ann.type === 'text' || ann.type === 'blur' || ann.type === 'number') && (
                             <>
                               {/* Corners - larger hit areas */}
                               <div className="absolute w-6 h-6 -top-3 -left-3 cursor-nwse-resize z-30" onMouseDown={(e) => handleResizeStart(e, ann.id, 'nw')} />
@@ -1207,6 +1398,26 @@ function App() {
                       )}
                       {ann.type === 'highlighter' && (
                         <div style={{ width: '100%', height: '100%' }}></div>
+                      )}
+                      {ann.type === 'number' && (
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: '#fff',
+                            fontWeight: 800,
+                            fontSize: ann.fontSize || 16,
+                            lineHeight: 1,
+                            userSelect: 'none',
+                            boxShadow: selectedId === ann.id ? `0 0 0 2px #fff, 0 0 0 4px ${ann.color || '#3b82f6'}` : '0 1px 4px rgba(0,0,0,0.35)',
+                            borderRadius: '50%',
+                          }}
+                        >
+                          {ann.text}
+                        </div>
                       )}
                       {ann.type === 'line' && (
                         <svg 
@@ -1289,30 +1500,38 @@ function App() {
               </div>
             </div>
           </div>
+          )}
         </main>
 
         {/* Toolbar (Right Sidebar) */}
         <aside className={`w-16 border-l flex flex-col items-center py-4 gap-1 shrink-0 transition-colors ${isDark ? 'bg-[#16161a] border-white/5' : 'bg-white border-gray-100'}`}>
-           <ToolButton icon={<MousePointer size={20}/>} active={editor.activeTool === 'select'} onClick={() => setEditor({...editor, activeTool: 'select'})} label="Select" isDark={isDark} />
-<ToolButton icon={<Type size={20}/>} active={editor.activeTool === 'text'} onClick={() => setEditor({...editor, activeTool: 'text'})} label="Text" isDark={isDark} />
-            <ToolButton icon={<Square size={20}/>} active={editor.activeTool === 'rect'} onClick={() => setEditor({...editor, activeTool: 'rect'})} label="Box" isDark={isDark} />
-            <ToolButton icon={<Circle size={20}/>} active={editor.activeTool === 'circle'} onClick={() => setEditor({...editor, activeTool: 'circle'})} label="Circle" isDark={isDark} />
-            <ToolButton icon={<PaintBucket size={20}/>} active={editor.activeTool === 'fill'} onClick={() => setEditor({...editor, activeTool: 'fill'})} label="Fill" isDark={isDark} />
-            <ToolButton icon={<ArrowUpRight size={20}/>} active={editor.activeTool === 'arrow'} onClick={() => setEditor({...editor, activeTool: 'arrow'})} label="Arrow" isDark={isDark} />
-            <ToolButton icon={<MinusIcon size={20}/>} active={editor.activeTool === 'line'} onClick={() => setEditor({...editor, activeTool: 'line'})} label="Line" isDark={isDark} />
-            <ToolButton icon={<Highlighter size={20}/>} active={editor.activeTool === 'highlighter'} onClick={() => setEditor({...editor, activeTool: 'highlighter'})} label="Highlight" isDark={isDark} />
-            <ToolButton icon={<EyeOff size={20}/>} active={editor.activeTool === 'blur'} onClick={() => setEditor({...editor, activeTool: 'blur'})} label="Blur" isDark={isDark} />
+           <ToolButton icon={<MousePointer size={20}/>} active={editor.activeTool === 'select'} onClick={() => setEditor({...editor, activeTool: 'select'})} label="Select" shortcut="V" isDark={isDark} />
+<ToolButton icon={<Type size={20}/>} active={editor.activeTool === 'text'} onClick={() => setEditor({...editor, activeTool: 'text'})} label="Text" shortcut="T" isDark={isDark} />
+            <ToolButton icon={<Square size={20}/>} active={editor.activeTool === 'rect'} onClick={() => setEditor({...editor, activeTool: 'rect'})} label="Box" shortcut="R" isDark={isDark} />
+            <ToolButton icon={<Circle size={20}/>} active={editor.activeTool === 'circle'} onClick={() => setEditor({...editor, activeTool: 'circle'})} label="Circle" shortcut="C" isDark={isDark} />
+            <ToolButton icon={<PaintBucket size={20}/>} active={editor.activeTool === 'fill'} onClick={() => setEditor({...editor, activeTool: 'fill'})} label="Fill" shortcut="F" isDark={isDark} />
+            <ToolButton icon={<ArrowUpRight size={20}/>} active={editor.activeTool === 'arrow'} onClick={() => setEditor({...editor, activeTool: 'arrow'})} label="Arrow" shortcut="A" isDark={isDark} />
+            <ToolButton icon={<MinusIcon size={20}/>} active={editor.activeTool === 'line'} onClick={() => setEditor({...editor, activeTool: 'line'})} label="Line" shortcut="L" isDark={isDark} />
+            <ToolButton icon={<Highlighter size={20}/>} active={editor.activeTool === 'highlighter'} onClick={() => setEditor({...editor, activeTool: 'highlighter'})} label="Highlight" shortcut="H" isDark={isDark} />
+            <ToolButton icon={<EyeOff size={20}/>} active={editor.activeTool === 'blur'} onClick={() => setEditor({...editor, activeTool: 'blur'})} label="Blur" shortcut="B" isDark={isDark} />
+            <ToolButton icon={<Hash size={20}/>} active={editor.activeTool === 'number'} onClick={() => setEditor({...editor, activeTool: 'number'})} label="Number" shortcut="N" isDark={isDark} />
         </aside>
       </div>
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 rounded-xl text-xs font-bold shadow-2xl bg-gray-900 text-white border border-white/10 animate-in fade-in slide-in-from-bottom-2">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
 
-function ToolButton({ icon, active, onClick, label, isDark }: any) {
+function ToolButton({ icon, active, onClick, label, shortcut, isDark }: any) {
   return (
     <div className="relative group/tool">
       <button 
-        onClick={onClick} 
+        onClick={onClick}
+        title={shortcut ? `${label} (${shortcut})` : label}
         className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all ${
           active 
             ? 'bg-blue-600 text-white shadow-lg scale-110' 
@@ -1327,7 +1546,7 @@ function ToolButton({ icon, active, onClick, label, isDark }: any) {
         className={`absolute right-full mr-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-md bg-gray-900 text-white text-[9px] font-bold uppercase tracking-widest whitespace-nowrap pointer-events-none opacity-0 group-hover/tool:opacity-100 transition-opacity duration-200 shadow-2xl z-100`}
         style={{ transitionDelay: '250ms' }}
       >
-        {label}
+        {label}{shortcut ? ` · ${shortcut}` : ''}
         {/* Tiny arrow */}
         <div className="absolute left-full top-1/2 -translate-y-1/2 border-4 border-transparent border-l-gray-900" />
       </div>

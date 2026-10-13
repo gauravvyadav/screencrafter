@@ -118,7 +118,7 @@ function App() {
       else if (d.toDateString() === yesterday.toDateString()) key = 'Yesterday';
       else key = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
       if (!groups[key]) groups[key] = [];
-      groups[key].push(cap);
+      groups[key]!.push(cap);
     }
     return groups;
   }, [filteredCaptures]);
